@@ -1,0 +1,210 @@
+import { useState, useEffect, useCallback } from "react"
+import { useSearchParams, useNavigate, useLocation } from "react-router-dom"
+import { Search, Filter } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
+import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
+import { Separator } from "@/components/ui/separator"
+import toast from "react-hot-toast"
+
+export function FilterBar() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  const [localFilters, setLocalFilters] = useState({
+    city: searchParams.get("city") || "",
+    district: searchParams.get("district") || "",
+    neighborhood: searchParams.get("neighborhood") || "",
+    category: searchParams.get("category") || "",
+    hasWebsite: searchParams.get("hasWebsite") === "true",
+    hasPhone: searchParams.get("hasPhone") === "true",
+    minRating: searchParams.get("minRating") || "",
+    minReviews: searchParams.get("minReviews") || "",
+  })
+
+  useEffect(() => {
+    setLocalFilters({
+      city: searchParams.get("city") || "",
+      district: searchParams.get("district") || "",
+      neighborhood: searchParams.get("neighborhood") || "",
+      category: searchParams.get("category") || "",
+      hasWebsite: searchParams.get("hasWebsite") === "true",
+      hasPhone: searchParams.get("hasPhone") === "true",
+      minRating: searchParams.get("minRating") || "",
+      minReviews: searchParams.get("minReviews") || "",
+    })
+  }, [searchParams])
+
+  const handleApplyFilters = useCallback(() => {
+    const params = new URLSearchParams()
+    Object.entries(localFilters).forEach(([key, value]) => {
+      if (value !== "" && value !== false && value !== null) {
+        params.set(key, String(value))
+      }
+    })
+    navigate(`${location.pathname}?${params.toString()}`)
+    toast.success("Filtreler uygulandı", { duration: 1500, icon: "🔍" })
+  }, [localFilters, navigate, location.pathname])
+
+  const clearFilters = useCallback(() => {
+    navigate(location.pathname)
+  }, [navigate, location.pathname])
+
+  const hasChanges =
+    localFilters.city !== (searchParams.get("city") || "") ||
+    localFilters.district !== (searchParams.get("district") || "") ||
+    localFilters.neighborhood !== (searchParams.get("neighborhood") || "") ||
+    localFilters.category !== (searchParams.get("category") || "") ||
+    localFilters.hasWebsite !== (searchParams.get("hasWebsite") === "true") ||
+    localFilters.hasPhone !== (searchParams.get("hasPhone") === "true") ||
+    localFilters.minRating !== (searchParams.get("minRating") || "") ||
+    localFilters.minReviews !== (searchParams.get("minReviews") || "")
+
+  const hasActiveFilters =
+    searchParams.get("city") ||
+    searchParams.get("district") ||
+    searchParams.get("neighborhood") ||
+    searchParams.get("category") ||
+    searchParams.get("hasWebsite") === "true" ||
+    searchParams.get("hasPhone") === "true" ||
+    searchParams.get("minRating") ||
+    searchParams.get("minReviews")
+
+  return (
+    <aside className="flex w-full flex-col gap-5 rounded-2xl border border-zinc-800/50 bg-zinc-900/40 p-5 backdrop-blur-sm">
+      <div className="flex items-center justify-between">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-300 uppercase tracking-wider">
+          <Search className="size-4 text-zinc-500" />
+          Filtreler
+        </h3>
+        {hasActiveFilters && (
+          <button
+            onClick={clearFilters}
+            className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors uppercase font-bold"
+          >
+            Temizle
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="filter-city" className="text-xs text-zinc-500 font-bold uppercase">Şehir</Label>
+            <Input
+              id="filter-city"
+              placeholder="İstanbul..."
+              value={localFilters.city}
+              onChange={(e) => setLocalFilters((prev) => ({ ...prev, city: e.target.value }))}
+              onKeyDown={(e) => e.key === "Enter" && handleApplyFilters()}
+              className="h-9 border-zinc-700 bg-zinc-800/50 text-zinc-200 placeholder:text-zinc-600"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="filter-district" className="text-xs text-zinc-500 font-bold uppercase">İlçe</Label>
+            <Input
+              id="filter-district"
+              placeholder="Maltepe..."
+              value={localFilters.district}
+              onChange={(e) => setLocalFilters((prev) => ({ ...prev, district: e.target.value }))}
+              onKeyDown={(e) => e.key === "Enter" && handleApplyFilters()}
+              className="h-9 border-zinc-700 bg-zinc-800/50 text-zinc-200 placeholder:text-zinc-600"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="filter-hood" className="text-xs text-zinc-500 font-bold uppercase">Mahalle</Label>
+          <Input
+            id="filter-hood"
+            placeholder="Altayçeşme..."
+            value={localFilters.neighborhood}
+            onChange={(e) => setLocalFilters((prev) => ({ ...prev, neighborhood: e.target.value }))}
+            onKeyDown={(e) => e.key === "Enter" && handleApplyFilters()}
+            className="h-9 border-zinc-700 bg-zinc-800/50 text-zinc-200 placeholder:text-zinc-600"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="filter-category" className="text-xs text-zinc-500 font-bold uppercase">Kategori</Label>
+          <Input
+            id="filter-category"
+            placeholder="Kafe, Restoran..."
+            value={localFilters.category}
+            onChange={(e) => setLocalFilters((prev) => ({ ...prev, category: e.target.value }))}
+            onKeyDown={(e) => e.key === "Enter" && handleApplyFilters()}
+            className="h-9 border-zinc-700 bg-zinc-800/50 text-zinc-200 placeholder:text-zinc-600"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <Label htmlFor="filter-min-rating" className="text-xs text-zinc-500 font-bold uppercase">Min. Puan</Label>
+            <Input
+              id="filter-min-rating"
+              type="number"
+              step="0.1"
+              placeholder="0.0"
+              value={localFilters.minRating}
+              onChange={(e) => setLocalFilters((prev) => ({ ...prev, minRating: e.target.value }))}
+              onKeyDown={(e) => e.key === "Enter" && handleApplyFilters()}
+              className="h-9 border-zinc-700 bg-zinc-800/50 text-zinc-200 placeholder:text-zinc-600"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="filter-min-reviews" className="text-xs text-zinc-500 font-bold uppercase">Min. Yorum</Label>
+            <Input
+              id="filter-min-reviews"
+              type="number"
+              placeholder="0"
+              value={localFilters.minReviews}
+              onChange={(e) => setLocalFilters((prev) => ({ ...prev, minReviews: e.target.value }))}
+              onKeyDown={(e) => e.key === "Enter" && handleApplyFilters()}
+              className="h-9 border-zinc-700 bg-zinc-800/50 text-zinc-200 placeholder:text-zinc-600"
+            />
+          </div>
+        </div>
+
+        <Separator className="bg-zinc-800/50" />
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="filter-website" className="text-sm text-zinc-400">Web Sitesi Var</Label>
+            <Switch
+              id="filter-website"
+              checked={localFilters.hasWebsite}
+              onCheckedChange={(checked: boolean) => setLocalFilters((prev) => ({ ...prev, hasWebsite: checked }))}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="filter-phone" className="text-sm text-zinc-400">Telefon Var</Label>
+            <Switch
+              id="filter-phone"
+              checked={localFilters.hasPhone}
+              onCheckedChange={(checked: boolean) => setLocalFilters((prev) => ({ ...prev, hasPhone: checked }))}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3 pt-2">
+        <Button
+          onClick={handleApplyFilters}
+          disabled={!hasChanges}
+          className={cn(
+            "w-full transition-all duration-300",
+            hasChanges
+              ? "bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20"
+              : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
+          )}
+        >
+          <Filter className="mr-2 size-4" />
+          Filtreleri Uygula
+        </Button>
+      </div>
+    </aside>
+  )
+}
