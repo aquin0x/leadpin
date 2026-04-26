@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(export PATH=\"$HOME/.cargo/bin:$PATH\")",
+      "Bash(curl -s http://localhost:4000/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173/)",
+      "Bash(tasklist)",
+      "PowerShell(Get-Process | Where-Object { $_.ProcessName -match \"leadpin|tauri|cargo|node|vite\" } | Select-Object Id, ProcessName, StartTime | Format-Table -AutoSize)",
+      "PowerShell($env:PATH = \"$env:USERPROFILE\\\\.cargo\\\\bin;$env:PATH\"; Start-Process -FilePath \"npm\" -ArgumentList \"run\",\"tauri:dev\" -WorkingDirectory \"C:\\\\antigravity_projects\\\\leadpin\" -WindowStyle Normal; Write-Output \"Started tauri:dev in detached window\")",
+      "PowerShell(Start-Sleep -Seconds 8; Get-Process | Where-Object { $_.ProcessName -match \"node|cargo|leadpin\" } | Select-Object Id, ProcessName | Format-Table -AutoSize)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:4000/health)",
+      "PowerShell(Start-Process -FilePath \"cmd.exe\" -ArgumentList \"/c\",\"npm run tauri:dev\" -WorkingDirectory \"C:\\\\antigravity_projects\\\\leadpin\" -WindowStyle Normal -Environment @{PATH=\"$env:USERPROFILE\\\\.cargo\\\\bin;$env:PATH\"} 2>&1; Write-Output \"Spawned\")",
+      "PowerShell($env:PATH = \"$env:USERPROFILE\\\\.cargo\\\\bin;\" + $env:PATH; Start-Process -FilePath \"cmd.exe\" -ArgumentList \"/c\",\"npm run tauri:dev\" -WorkingDirectory \"C:\\\\antigravity_projects\\\\leadpin\"; Write-Output \"Spawned\")",
+      "Bash(curl -s -o /dev/null -w \"vite=%{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl -s -o /dev/null -w \"backend=%{http_code}\\\\n\" http://localhost:4000/health)"
+    ]
+  }
+}

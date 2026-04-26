@@ -6,6 +6,7 @@ import { getLists, getListById, createList, addItemsToList, removeItemFromList, 
 import { authMiddleware } from './middleware/auth';
 import { supabase } from './utils/supabase';
 import whatsappRoutes from './routes/whatsapp.routes';
+import userSettingsRoutes from './routes/user-settings.routes';
 
 dotenv.config();
 
@@ -76,6 +77,124 @@ app.get('/r/:shortId', async (req, res) => {
   return res.redirect(302, `${base}${sep}lead=${encodeURIComponent(shortId)}`);
 });
 
+// WhatsApp outreach feed — gruplu (kampanya batch'leri tek satır, tekiller bireysel).
+// Sidebar mesaj geçmişi bunu kullanır.
+app.get('/api/outreach/whatsapp/grouped', authMiddleware, async (req, res) => {
+  const userId = (req as any).user.id;
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  try {
+    // Yakın geçmişten yeterli ham log çek (gruplama sonrası satır sayısı azalacak)
+    // Önce yeni kolonlarla dene; migration'ı henüz çalıştırmamış kullanıcılar için
+    // kolonlar yoksa eski şemayla retry et — log'lar yine de görünsün.
+    let data: any[] | null = null;
+    let error: any = null;
+
+    {
+      const r = await supabase
+        .from('outreach_logs')
+        .select(`
+          id, status, message_content, created_at, batch_id, list_id,
+          business:businesses(id, name, phone, short_id, short_id_clicks, short_id_last_click_at),
+          list:lists(id, name)
+        `)
+        .eq('type', 'whatsapp')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(500);
+      data = r.data as any[] | null;
+      error = r.error;
+    }
+
+    // Migration uygulanmadıysa kolon yok hatası — eski şemayla tekrar dene
+    if (error && /batch_id|list_id|column .* does not exist/i.test(error.message || '')) {
+      console.warn('[outreach/grouped] new columns missing, falling back:', error.message);
+      const r = await supabase
+        .from('outreach_logs')
+        .select(`
+          id, status, message_content, created_at,
+          business:businesses(id, name, phone, short_id, short_id_clicks, short_id_last_click_at)
+        `)
+        .eq('type', 'whatsapp')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(500);
+      data = r.data as any[] | null;
+      error = r.error;
+      // Eski şemada batch_id/list_id null kabul et
+      if (data) data = data.map((row: any) => ({ ...row, batch_id: null, list_id: null, list: null }));
+    }
+
+    if (error) return res.status(400).json({ message: error.message });
+
+    const rows: any[] = data || [];
+    const grouped: any[] = [];
+    const batchMap = new Map<string, any>();
+
+    for (const r of rows) {
+      if (r.batch_id) {
+        const existing = batchMap.get(r.batch_id);
+        if (existing) {
+          existing.total++;
+          if (r.status === 'sent') existing.sent++;
+          else if (r.status === 'failed') existing.failed++;
+          else if (r.status === 'skipped') existing.skipped++;
+          // Tıklamayı tekil işletme bazında topla
+          const bId = (r.business as any)?.id;
+          const clicks = (r.business as any)?.short_id_clicks || 0;
+          if (bId && !existing._bizSeen.has(bId)) {
+            existing._bizSeen.add(bId);
+            existing.totalClicks += clicks;
+          }
+          if (new Date(r.created_at) > new Date(existing.created_at)) {
+            existing.created_at = r.created_at;
+          }
+        } else {
+          const list = r.list as any;
+          const bId = (r.business as any)?.id;
+          const clicks = (r.business as any)?.short_id_clicks || 0;
+          const entry: any = {
+            kind: 'batch',
+            batch_id: r.batch_id,
+            list_id: r.list_id,
+            list_name: list?.name ?? null,
+            created_at: r.created_at,
+            total: 1,
+            sent: r.status === 'sent' ? 1 : 0,
+            failed: r.status === 'failed' ? 1 : 0,
+            skipped: r.status === 'skipped' ? 1 : 0,
+            totalClicks: bId ? clicks : 0,
+            _bizSeen: new Set<string>(bId ? [bId] : []),
+          };
+          batchMap.set(r.batch_id, entry);
+          grouped.push(entry);
+        }
+      } else {
+        grouped.push({
+          kind: 'single',
+          id: r.id,
+          status: r.status,
+          message_content: r.message_content,
+          created_at: r.created_at,
+          business: r.business,
+        });
+      }
+    }
+
+    // _bizSeen Set'lerini temizle (JSON'a çıkmasın)
+    for (const g of grouped) {
+      if (g.kind === 'batch') delete g._bizSeen;
+    }
+
+    grouped.sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
+    return res.json({ rows: grouped.slice(0, limit) });
+  } catch (e: any) {
+    return res.status(500).json({ message: e.message });
+  }
+});
+
 // WhatsApp outreach feed (auth) — used by the "Gönderilen Mesajlar" panel.
 app.get('/api/outreach/whatsapp', authMiddleware, async (req, res) => {
   const userId = (req as any).user.id;
@@ -130,6 +249,9 @@ app.post('/api/admin/clear-data', authMiddleware, (req, res) => {
 
 // WhatsApp Campaign Routes
 app.use('/api/whatsapp', whatsappRoutes);
+
+// User Settings (short link domain + WhatsApp proxy)
+app.use('/api/user-settings', userSettingsRoutes);
 
 // List Management Routes
 app.get('/api/lists', authMiddleware, getLists);

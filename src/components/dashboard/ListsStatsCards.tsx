@@ -1,7 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
-import { Send, XCircle, MousePointerClick, Building2 } from "lucide-react"
+import { FolderOpen, Send, Building2, MousePointerClick } from "lucide-react"
 import { Card } from "@/components/ui/card"
-import { listWhatsAppOutreach, type WhatsAppOutreachRow } from "@/lib/api-client"
+import { api, listWhatsAppOutreach, type WhatsAppOutreachRow } from "@/lib/api-client"
+
+interface ListRow {
+  id: string
+  items_count?: [{ count: number }]
+  sent_count?: number
+}
 
 interface StatItem {
   label: string
@@ -13,35 +19,55 @@ interface StatItem {
   badgeColor: string
 }
 
-export function WhatsAppStatsCards() {
-  const { data, isLoading } = useQuery({
+export function ListsStatsCards() {
+  const { data: lists = [], isLoading: listsLoading } = useQuery({
+    queryKey: ["lists"],
+    queryFn: () => api.get<ListRow[]>("/api/lists"),
+    staleTime: 30_000,
+  })
+
+  const { data: outreach, isLoading: outreachLoading } = useQuery({
     queryKey: ["whatsappOutreach", ""],
     queryFn: () => listWhatsAppOutreach(undefined, 500),
     placeholderData: (prev) => prev,
   })
 
-  const rows: WhatsAppOutreachRow[] = data?.rows ?? []
-  const total = data?.total ?? 0
+  const isLoading = listsLoading || outreachLoading
 
-  const sentCount = rows.filter((r) => r.status === "sent").length
-  const failedCount = rows.filter((r) => r.status === "failed").length
+  const totalLists = lists.length
+  const messagedLists = lists.filter((l) => (l.sent_count ?? 0) > 0).length
+  const totalBusinessesInLists = lists.reduce(
+    (sum, l) => sum + (l.items_count?.[0]?.count || 0),
+    0
+  )
 
+  // Tıklama: outreach loglarındaki unique işletmelerin clicks toplamı
+  const rows: WhatsAppOutreachRow[] = outreach?.rows ?? []
   const uniqueBiz = new Map<string, number>()
   let totalClicks = 0
   for (const r of rows) {
     const b = r.business
     if (!b?.id) continue
     if (!uniqueBiz.has(b.id)) {
-      const clicks = b.short_id_clicks || 0
-      uniqueBiz.set(b.id, clicks)
-      totalClicks += clicks
+      const c = b.short_id_clicks || 0
+      uniqueBiz.set(b.id, c)
+      totalClicks += c
     }
   }
 
   const items: StatItem[] = [
     {
-      label: "Gönderilen",
-      value: total || sentCount,
+      label: "Toplam Liste",
+      value: totalLists,
+      icon: FolderOpen,
+      color: "text-blue-400",
+      bg: "bg-blue-500/10",
+      badge: "ALL",
+      badgeColor: "bg-blue-500/20 text-blue-300",
+    },
+    {
+      label: "Mesaj Gönderilen",
+      value: messagedLists,
       icon: Send,
       color: "text-emerald-400",
       bg: "bg-emerald-500/10",
@@ -49,22 +75,13 @@ export function WhatsAppStatsCards() {
       badgeColor: "bg-emerald-500/20 text-emerald-300",
     },
     {
-      label: "Başarısız",
-      value: failedCount,
-      icon: XCircle,
-      color: "text-red-400",
-      bg: "bg-red-500/10",
-      badge: "ERR",
-      badgeColor: "bg-red-500/20 text-red-300",
-    },
-    {
       label: "İşletme",
-      value: uniqueBiz.size,
+      value: totalBusinessesInLists,
       icon: Building2,
-      color: "text-blue-400",
-      bg: "bg-blue-500/10",
+      color: "text-purple-400",
+      bg: "bg-purple-500/10",
       badge: "BIZ",
-      badgeColor: "bg-blue-500/20 text-blue-300",
+      badgeColor: "bg-purple-500/20 text-purple-300",
     },
     {
       label: "Tıklama",
@@ -87,7 +104,9 @@ export function WhatsAppStatsCards() {
             className="group border-zinc-800 bg-zinc-900/40 p-4 backdrop-blur-sm transition-all hover:border-zinc-700 hover:bg-zinc-900/60"
           >
             <div className="flex items-start justify-between mb-2">
-              <div className={`flex size-9 items-center justify-center rounded-lg ${s.bg} transition-transform group-hover:scale-110`}>
+              <div
+                className={`flex size-9 items-center justify-center rounded-lg ${s.bg} transition-transform group-hover:scale-110`}
+              >
                 <Icon className={`size-4 ${s.color}`} />
               </div>
               <span className={`text-[9px] font-bold rounded-md px-1.5 py-0.5 ${s.badgeColor}`}>

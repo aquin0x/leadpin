@@ -70,11 +70,11 @@ function WhatsAppPopover({ business }: { business: Business }) {
             return
           }
           if (res.reason === "no_line") {
-            toast.error("Önce Hesap'tan bir WhatsApp hattı ekleyin")
+            toast.error("Önce Ayarlar'dan bir WhatsApp hattı ekleyin")
             return
           }
           if (res.reason === "not_ready") {
-            toast.error("WhatsApp hattı hazır değil. Hesap'tan QR'ı okutun.")
+            toast.error("WhatsApp hattı hazır değil. Ayarlar'dan QR'ı okutun.")
             return
           }
           if (res.reason === "no_phone") toast.error("Geçerli WhatsApp numarası yok")

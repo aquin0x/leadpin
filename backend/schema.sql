@@ -67,6 +67,9 @@ create index if not exists idx_scrape_jobs_user on public.scrape_jobs (user_id, 
 
 
 -- 1.3) outreach_logs — gönderilen WhatsApp/email mesajlarının log'u
+-- batch_id: aynı toplu kampanyadan gelen tüm log'lar aynı UUID'ye sahip olur
+--           (tekil gönderimde NULL); UI bunları tek satırda grupluyor.
+-- list_id : kampanya hangi listeden çalıştırıldıysa o liste (görsellik için).
 create table if not exists public.outreach_logs (
   id               uuid primary key default gen_random_uuid(),
   user_id          uuid default auth.uid() references auth.users(id) on delete cascade,
@@ -74,11 +77,18 @@ create table if not exists public.outreach_logs (
   type             text not null check (type in ('whatsapp','email','instagram')),
   status           text default 'sent',
   message_content  text,
+  batch_id         uuid,
+  list_id          uuid references public.lists(id) on delete set null,
   created_at       timestamptz not null default now()
 );
 
-create index if not exists idx_outreach_user on public.outreach_logs (user_id, created_at desc);
-create index if not exists idx_outreach_biz  on public.outreach_logs (business_id);
+create index if not exists idx_outreach_user  on public.outreach_logs (user_id, created_at desc);
+create index if not exists idx_outreach_biz   on public.outreach_logs (business_id);
+create index if not exists idx_outreach_batch on public.outreach_logs (user_id, batch_id) where batch_id is not null;
+
+-- Migration: mevcut kurulumlara kolonları ekle (idempotent)
+alter table public.outreach_logs add column if not exists batch_id uuid;
+alter table public.outreach_logs add column if not exists list_id uuid references public.lists(id) on delete set null;
 
 
 -- 1.4) lists — kullanıcı tarafından oluşturulan işletme listeleri
@@ -103,6 +113,22 @@ create table if not exists public.list_items (
 );
 
 create index if not exists idx_list_items_list on public.list_items (list_id);
+
+
+-- 1.6) contacts — bir işletmeye bağlı ek iletişim kanalları
+-- (businesses tablosundaki phone/website/email ana kayıt; contacts ise ekstra
+-- kişiler veya kanallar için — business detay sayfasında listelenir)
+create table if not exists public.contacts (
+  id           uuid primary key default gen_random_uuid(),
+  business_id  uuid not null references public.businesses(id) on delete cascade,
+  email        text,
+  instagram    text,
+  whatsapp     text,
+  facebook     text,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists idx_contacts_business on public.contacts (business_id);
 
 
 -- ============================================================================
@@ -231,8 +257,21 @@ create table if not exists public.user_settings (
   user_id                  uuid primary key references auth.users(id) on delete cascade,
   short_link_public_url    text,    -- mesajda görünecek domain (örn. https://ugra.io)
   short_link_redirect_url  text,    -- tıklayınca yönlendirilecek landing
+  whatsapp_proxy_host      text,    -- Termux/telefon proxy host (boşsa kullanılmaz)
+  whatsapp_proxy_port      integer, -- Proxy port (1-65535)
+  whatsapp_proxy_type      text     -- 'http' | 'socks5' (default 'http')
+                           check (whatsapp_proxy_type is null
+                             or whatsapp_proxy_type in ('http','socks5')),
   updated_at               timestamptz not null default now()
 );
+
+-- Mevcut kurulumlara migration için (idempotent — yoksa kolon ekler)
+alter table public.user_settings
+  add column if not exists whatsapp_proxy_host text;
+alter table public.user_settings
+  add column if not exists whatsapp_proxy_port integer;
+alter table public.user_settings
+  add column if not exists whatsapp_proxy_type text;
 
 
 -- ============================================================================
@@ -269,6 +308,7 @@ alter table public.scrape_jobs    enable row level security;
 alter table public.outreach_logs  enable row level security;
 alter table public.lists          enable row level security;
 alter table public.list_items     enable row level security;
+alter table public.contacts       enable row level security;
 
 drop policy if exists "businesses_select_own" on public.businesses;
 drop policy if exists "businesses_insert_own" on public.businesses;
@@ -298,6 +338,11 @@ create policy "lists_own" on public.lists for all to authenticated
 drop policy if exists "list_items_own" on public.list_items;
 create policy "list_items_own" on public.list_items for all to authenticated
   using (exists (select 1 from public.lists where id = list_id and user_id = auth.uid()));
+
+drop policy if exists "contacts_own" on public.contacts;
+create policy "contacts_own" on public.contacts for all to authenticated
+  using (exists (select 1 from public.businesses
+                 where id = business_id and user_id = auth.uid()));
 
 
 -- 5.2) WhatsApp otomasyon tabloları

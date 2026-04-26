@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Loader2, Plus, MessageCircle, Trash2, RefreshCw, Phone, Mail, KeyRound, Eye, EyeOff, Check, Link as LinkIcon, Save } from "lucide-react"
+import { Loader2, Plus, MessageCircle, Trash2, RefreshCw, Phone, Mail, KeyRound, Eye, EyeOff, Check, Link as LinkIcon, Save, Wifi, X } from "lucide-react"
 import {
   listWhatsAppLines,
   createWhatsAppLine,
@@ -13,7 +13,9 @@ import {
   clearAllData,
   getUserSettings,
   updateUserSettings,
+  testWhatsAppProxy,
   type WhatsAppLine,
+  type WhatsAppProxyType,
 } from "@/lib/api-client"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { supabase } from "@/lib/supabase"
@@ -526,6 +528,214 @@ function ShortLinkSettingsSection() {
   )
 }
 
+function WhatsAppProxySection() {
+  const queryClient = useQueryClient()
+  const [host, setHost] = useState("")
+  const [port, setPort] = useState("")
+  const [type, setType] = useState<WhatsAppProxyType>("http")
+  const [dirty, setDirty] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: getUserSettings,
+    staleTime: 30_000,
+  })
+
+  useEffect(() => {
+    if (!data) return
+    setHost(data.whatsapp_proxy_host ?? "")
+    setPort(data.whatsapp_proxy_port != null ? String(data.whatsapp_proxy_port) : "")
+    setType((data.whatsapp_proxy_type as WhatsAppProxyType) ?? "http")
+    setDirty(false)
+    setTestResult(null)
+  }, [data])
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const trimmedHost = host.trim()
+      const portNum = port.trim() ? Number(port.trim()) : null
+      return updateUserSettings({
+        whatsapp_proxy_host: trimmedHost || null,
+        whatsapp_proxy_port: portNum,
+        whatsapp_proxy_type: trimmedHost ? type : null,
+      })
+    },
+    onSuccess: (next) => {
+      queryClient.setQueryData(["userSettings"], next)
+      toast.success(
+        host.trim()
+          ? "Proxy kaydedildi — hatlar yeni proxy ile yeniden bağlanıyor"
+          : "Proxy kapatıldı — hatlar doğrudan bağlanıyor",
+        { duration: 4500 }
+      )
+      setDirty(false)
+    },
+    onError: (e: any) => toast.error(e.message || "Kaydedilemedi"),
+  })
+
+  const handleTest = async () => {
+    const trimmedHost = host.trim()
+    const portNum = Number(port.trim())
+    if (!trimmedHost) return toast.error("Host girin")
+    if (!Number.isFinite(portNum) || portNum <= 0 || portNum > 65535)
+      return toast.error("Geçerli bir port girin")
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const r = await testWhatsAppProxy({ host: trimmedHost, port: portNum, type })
+      if (r.ok) {
+        setTestResult({ ok: true, text: `Bağlantı başarılı (${r.latencyMs ?? "?"} ms)` })
+      } else {
+        setTestResult({ ok: false, text: r.message || "Başarısız" })
+      }
+    } catch (e: any) {
+      setTestResult({ ok: false, text: e?.message || "Test başarısız" })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const portNumValid =
+    !port.trim() ||
+    (Number.isFinite(Number(port.trim())) &&
+      Number(port.trim()) > 0 &&
+      Number(port.trim()) <= 65535)
+
+  const proxyActive = !!data?.whatsapp_proxy_host && !!data?.whatsapp_proxy_port
+
+  return (
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Wifi className="size-5 text-purple-400" />
+        <span className="font-semibold text-zinc-100">WhatsApp Proxy</span>
+        {proxyActive && (
+          <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">
+            Aktif
+          </span>
+        )}
+      </div>
+
+      <p className="text-[11px] text-zinc-500 leading-relaxed">
+        Telefon internetinizi Termux gibi bir proxy ile paylaşıyorsanız buraya host ve
+        port girin. Boş bırakırsanız bilgisayarın internet bağlantısı kullanılır.
+        Değişiklikten sonra <strong>WhatsApp hatlarınız otomatik olarak</strong> yeni
+        proxy ile yeniden bağlanır — QR taramanız gerekmez.
+      </p>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="size-4 animate-spin text-zinc-500" />
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-[1fr_88px_96px] gap-2">
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1 block">
+                Host
+              </label>
+              <Input
+                value={host}
+                onChange={(e) => {
+                  setHost(e.target.value)
+                  setDirty(true)
+                  setTestResult(null)
+                }}
+                placeholder="192.168.43.1"
+                className="h-10 border-zinc-700 bg-zinc-950/40 font-mono text-base tracking-tight"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1 block">
+                Port
+              </label>
+              <Input
+                value={port}
+                onChange={(e) => {
+                  setPort(e.target.value.replace(/\D/g, ""))
+                  setDirty(true)
+                  setTestResult(null)
+                }}
+                placeholder="8080"
+                className="h-10 border-zinc-700 bg-zinc-950/40 font-mono text-xs px-2"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1 block">
+                Tip
+              </label>
+              <select
+                value={type}
+                onChange={(e) => {
+                  setType(e.target.value as WhatsAppProxyType)
+                  setDirty(true)
+                  setTestResult(null)
+                }}
+                className="h-10 w-full rounded-md border border-zinc-700 bg-zinc-950/40 px-1.5 text-xs text-zinc-200"
+              >
+                <option value="http">HTTP</option>
+                <option value="socks5">SOCKS5</option>
+              </select>
+            </div>
+          </div>
+
+          {!portNumValid && (
+            <p className="text-[10px] text-red-400">Port 1-65535 arası olmalı</p>
+          )}
+
+          {testResult && (
+            <div
+              className={`flex items-start gap-1.5 rounded-md px-2 py-1.5 text-[11px] ${
+                testResult.ok
+                  ? "border border-emerald-500/20 bg-emerald-500/5 text-emerald-300"
+                  : "border border-red-500/20 bg-red-500/5 text-red-300"
+              }`}
+            >
+              {testResult.ok ? (
+                <Check className="size-3 shrink-0 mt-0.5" />
+              ) : (
+                <X className="size-3 shrink-0 mt-0.5" />
+              )}
+              <span className="break-all">{testResult.text}</span>
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <Button
+              onClick={handleTest}
+              disabled={testing || !host.trim() || !port.trim() || !portNumValid}
+              variant="ghost"
+              className="flex-1 border border-zinc-700 text-zinc-200 hover:bg-zinc-800/60"
+            >
+              {testing ? (
+                <Loader2 className="mr-1.5 size-4 animate-spin" />
+              ) : (
+                <Wifi className="mr-1.5 size-4" />
+              )}
+              Bağlantıyı Test Et
+            </Button>
+            {dirty && (
+              <Button
+                onClick={() => saveMutation.mutate()}
+                disabled={saveMutation.isPending || !portNumValid}
+                className="flex-1 bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20"
+              >
+                {saveMutation.isPending ? (
+                  <Loader2 className="mr-1.5 size-4 animate-spin" />
+                ) : (
+                  <Save className="mr-1.5 size-4" />
+                )}
+                Kaydet
+              </Button>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
 export function AccountDialog({ open, onOpenChange }: Props) {
   const [lines, setLines] = useState<WhatsAppLine[]>([])
   const [adding, setAdding] = useState(false)
@@ -617,7 +827,7 @@ export function AccountDialog({ open, onOpenChange }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg border-zinc-800 bg-zinc-950 max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-zinc-100">Hesap</DialogTitle>
+          <DialogTitle className="text-zinc-100">Ayarlar</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -626,6 +836,9 @@ export function AccountDialog({ open, onOpenChange }: Props) {
 
           {/* Kısa Link Ayarları — sadece link_owner */}
           {isLinkOwner && <ShortLinkSettingsSection />}
+
+          {/* WhatsApp Proxy — herkese açık */}
+          <WhatsAppProxySection />
 
           {/* WhatsApp Hatları */}
           <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-3">

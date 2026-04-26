@@ -115,29 +115,59 @@ function deleteLineMeta(userId: string, lineId: string) {
   saveLines(all);
 }
 
-function buildPuppeteerArgs(): string[] {
+async function getProxyForUser(userId: string): Promise<{
+  host: string;
+  port: number;
+  type: 'http' | 'socks5';
+} | null> {
+  // 1) Kullanıcı ayarı (production)
+  try {
+    const { data } = await supabase
+      .from('user_settings')
+      .select('whatsapp_proxy_host, whatsapp_proxy_port, whatsapp_proxy_type')
+      .eq('user_id', userId)
+      .maybeSingle();
+    const host = data?.whatsapp_proxy_host?.trim();
+    const port = data?.whatsapp_proxy_port;
+    if (host && port) {
+      const type = data?.whatsapp_proxy_type === 'socks5' ? 'socks5' : 'http';
+      return { host, port: Number(port), type };
+    }
+  } catch (e: any) {
+    console.warn('[WA] proxy lookup failed:', e?.message);
+  }
+  // 2) .env fallback (dev kolaylığı)
+  const envHost = process.env.WHATSAPP_PROXY_HOST;
+  const envPort = process.env.WHATSAPP_PROXY_PORT;
+  if (envHost && envPort) {
+    return { host: envHost, port: Number(envPort), type: 'http' };
+  }
+  return null;
+}
+
+async function buildPuppeteerArgs(userId: string): Promise<string[]> {
   const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
-  const proxyHost = process.env.WHATSAPP_PROXY_HOST;
-  const proxyPort = process.env.WHATSAPP_PROXY_PORT;
-  if (proxyHost && proxyPort) {
-    args.push(`--proxy-server=http://${proxyHost}:${proxyPort}`);
+  const proxy = await getProxyForUser(userId);
+  if (proxy) {
+    const scheme = proxy.type === 'socks5' ? 'socks5' : 'http';
+    args.push(`--proxy-server=${scheme}://${proxy.host}:${proxy.port}`);
   }
   return args;
 }
 
-async function createClient(lineId: string): Promise<Client> {
+async function createClient(lineId: string, userId: string): Promise<Client> {
   const { Client, LocalAuth } = await loadWA();
   return new Client({
     authStrategy: new LocalAuth({ clientId: lineId, dataPath: SESSION_ROOT }),
     puppeteer: {
       headless: true,
-      args: buildPuppeteerArgs(),
+      args: await buildPuppeteerArgs(userId),
     },
   });
 }
 
 async function createSession(meta: LineMeta): Promise<Session> {
-  const client = await createClient(meta.id);
+  const client = await createClient(meta.id, meta.userId);
   const session: Session = {
     lineId: meta.id,
     userId: meta.userId,
@@ -352,6 +382,30 @@ function pickReadySession(userId: string): Session | null {
   return null;
 }
 
+// Proxy ayarı değişince — kullanıcının tüm aktif hatlarını destroy + reinit.
+// Yeni Puppeteer instance'ları yeni proxy ile başlar. QR taraması GEREKMEZ:
+// LocalAuth oturumu `session-<lineId>/` altında diskte kaldığı için yeni
+// client yeniden auth olur ve doğrudan 'ready' state'ine döner.
+export async function restartLinesForUser(userId: string): Promise<void> {
+  const metas = getUserLines(userId);
+  for (const meta of metas) {
+    const existing = sessions.get(meta.id);
+    if (existing) {
+      try { await existing.client.destroy(); } catch {}
+      sessions.delete(meta.id);
+    }
+    try {
+      await createSession(meta);
+      initLine(userId, meta.id).catch((e) =>
+        console.error(`[WA:${meta.id}] restart init error:`, e?.message)
+      );
+    } catch (e: any) {
+      console.error(`[WA:${meta.id}] restart create error:`, e?.message);
+    }
+  }
+  console.log(`[WA] restarted ${metas.length} line(s) for user ${userId} after proxy change`);
+}
+
 // Bootstrap: backend başlarken kayıtlı tüm hatları otomatik başlat
 export async function bootstrapLines(): Promise<void> {
   const all = loadLines();
@@ -423,7 +477,9 @@ async function logOutreach(
   businessId: string,
   status: 'sent' | 'failed' | 'skipped',
   message: string,
-  detail?: string
+  detail?: string,
+  batchId?: string,
+  listId?: string
 ) {
   await supabase.from('outreach_logs').insert({
     business_id: businessId,
@@ -431,6 +487,8 @@ async function logOutreach(
     type: 'whatsapp',
     message_content: detail ? `${message}\n\n[${detail}]` : message,
     status,
+    batch_id: batchId ?? null,
+    list_id: listId ?? null,
   });
 }
 
@@ -571,6 +629,8 @@ export async function startCampaign(params: StartCampaignParams): Promise<Campai
     .map((i: any) => i.business)
     .filter(Boolean);
 
+  const batchId = crypto.randomUUID();
+
   const campaign: CampaignState & { stopRequested?: boolean } = {
     id: `${listId}-${Date.now()}`,
     userId,
@@ -609,7 +669,7 @@ export async function startCampaign(params: StartCampaignParams): Promise<Campai
       if (!phone) {
         campaign.skipped++;
         campaign.processed++;
-        await logOutreach(userId, biz.id, 'skipped', '', 'Geçersiz veya sabit hat numarası');
+        await logOutreach(userId, biz.id, 'skipped', '', 'Geçersiz veya sabit hat numarası', batchId, listId);
         continue;
       }
 
@@ -630,7 +690,7 @@ export async function startCampaign(params: StartCampaignParams): Promise<Campai
         if (!numberId) {
           campaign.skipped++;
           campaign.processed++;
-          await logOutreach(userId, biz.id, 'skipped', message, 'WhatsApp hesabı yok');
+          await logOutreach(userId, biz.id, 'skipped', message, 'WhatsApp hesabı yok', batchId, listId);
           continue;
         }
 
@@ -645,7 +705,7 @@ export async function startCampaign(params: StartCampaignParams): Promise<Campai
 
         campaign.sent++;
         campaign.processed++;
-        await logOutreach(userId, biz.id, 'sent', message);
+        await logOutreach(userId, biz.id, 'sent', message, undefined, batchId, listId);
 
         const isLast = campaign.processed === campaign.total;
         if (!isLast) {
@@ -660,7 +720,7 @@ export async function startCampaign(params: StartCampaignParams): Promise<Campai
         campaign.failed++;
         campaign.processed++;
         campaign.lastError = err.message;
-        await logOutreach(userId, biz.id, 'failed', message, err.message);
+        await logOutreach(userId, biz.id, 'failed', message, err.message, batchId, listId);
         console.error(`[WA:${chosenLineId}] send failed for ${biz.name}:`, err.message);
       }
     }

@@ -35,8 +35,8 @@ export function OutreachPanel({ business }: OutreachPanelProps) {
         {
           onSuccess: (res) => {
             if (res.ok) { resolve(); return }
-            if (res.reason === "no_line") reject(new Error("Önce Hesap'tan bir WhatsApp hattı ekleyin"))
-            else if (res.reason === "not_ready") reject(new Error("WhatsApp hattı hazır değil. Hesap'tan QR'ı okutun."))
+            if (res.reason === "no_line") reject(new Error("Önce Ayarlar'dan bir WhatsApp hattı ekleyin"))
+            else if (res.reason === "not_ready") reject(new Error("WhatsApp hattı hazır değil. Ayarlar'dan QR'ı okutun."))
             else if (res.reason === "no_phone") reject(new Error("Geçerli WhatsApp numarası yok"))
             else if (res.reason === "no_whatsapp") reject(new Error("Bu numarada WhatsApp hesabı yok"))
             else reject(new Error("send_failed" in res ? (res as any).error || "Gönderim başarısız" : "Gönderim başarısız"))

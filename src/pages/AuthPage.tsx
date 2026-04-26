@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { Target, Loader2 } from "lucide-react"
+import { Loader2 } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -72,12 +72,11 @@ export function AuthPage() {
 
       <Card className="relative w-full max-w-md border-zinc-800 bg-zinc-900/80 backdrop-blur-xl">
         <CardHeader className="space-y-3 text-center">
-          <div className="mx-auto flex size-16 items-center justify-center rounded-2xl bg-blue-500/10 shadow-xl shadow-blue-500/5">
-            <Target className="size-8 text-blue-400" />
-          </div>
+          <img src="/logo.png" alt="Leadpin" className="mx-auto size-20" />
           <div>
-            <h1 className="font-sans text-3xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
-              LeadPin
+            <h1 className="font-sans text-3xl font-bold tracking-tight">
+              <span className="text-white">Lead</span>
+              <span className="text-blue-500">pin</span>
             </h1>
             <p className="mt-2 text-sm text-zinc-400">İşletmeleri keşfedin, hedefleyin, kazanın</p>
           </div>

@@ -1,7 +1,6 @@
 import { useState } from "react"
 import { MessageCircle, Send, History, Radio, Hand, Bot, Clock, FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { LineStatusCard } from "./whatsapp/LineStatusCard"
 import { WhatsAppStatsCards } from "./whatsapp/WhatsAppStatsCards"
 import { BulkSendPanel } from "./whatsapp/BulkSendPanel"
 import { LineManagerPanel } from "./whatsapp/LineManagerPanel"
@@ -52,15 +51,8 @@ export function WhatsAppPage() {
         </div>
       </div>
 
-      {/* Üst Panel: Durum + İstatistikler */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <div className="lg:col-span-4">
-          <LineStatusCard onManage={() => setActiveTab("lines")} />
-        </div>
-        <div className="lg:col-span-8">
-          <WhatsAppStatsCards />
-        </div>
-      </div>
+      {/* Üst Panel: İstatistikler (durum kartı sol sidebar'da) */}
+      <WhatsAppStatsCards />
 
       {/* Tab Navigasyonu */}
       <div className="rounded-2xl border border-zinc-800/50 bg-zinc-900/40 p-1.5 backdrop-blur-sm">

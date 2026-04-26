@@ -280,7 +280,7 @@ export function WhatsAppCampaignModal({
             <div className="flex items-center justify-between">
               <div className="text-xs text-zinc-500 uppercase tracking-wider">Gönderim Hattı</div>
               {readyLines.length === 0 && (
-                <span className="text-xs text-amber-400">Hesap'tan WhatsApp hattı ekleyin</span>
+                <span className="text-xs text-amber-400">Ayarlar'dan WhatsApp hattı ekleyin</span>
               )}
             </div>
             <select

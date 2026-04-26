@@ -247,6 +247,36 @@ export interface WhatsAppOutreachRow {
   } | null
 }
 
+export type GroupedOutreachItem =
+  | {
+      kind: "single"
+      id: string
+      status: "sent" | "failed" | "skipped"
+      message_content: string
+      created_at: string
+      business: WhatsAppOutreachRow["business"]
+    }
+  | {
+      kind: "batch"
+      batch_id: string
+      list_id: string | null
+      list_name: string | null
+      created_at: string
+      total: number
+      sent: number
+      failed: number
+      skipped: number
+      totalClicks: number
+    }
+
+export async function listWhatsAppOutreachGrouped(
+  limit = 50
+): Promise<{ rows: GroupedOutreachItem[] }> {
+  const params = new URLSearchParams()
+  params.set("limit", String(limit))
+  return fetchApi(`/api/outreach/whatsapp/grouped?${params.toString()}`)
+}
+
 export async function listWhatsAppOutreach(
   search?: string,
   limit = 100,
@@ -435,21 +465,54 @@ export async function deleteMessageTemplate(id: string): Promise<{ message: stri
 
 // ========= User Settings (kendi domain, landing URL) =========
 
+export type WhatsAppProxyType = "http" | "socks5"
+
 export interface UserSettings {
   user_id: string
   short_link_public_url: string | null
   short_link_redirect_url: string | null
+  whatsapp_proxy_host: string | null
+  whatsapp_proxy_port: number | null
+  whatsapp_proxy_type: WhatsAppProxyType | null
 }
+
+export type UserSettingsPatch = Partial<
+  Pick<
+    UserSettings,
+    | "short_link_public_url"
+    | "short_link_redirect_url"
+    | "whatsapp_proxy_host"
+    | "whatsapp_proxy_port"
+    | "whatsapp_proxy_type"
+  >
+>
 
 export async function getUserSettings(): Promise<UserSettings> {
   return fetchApi<UserSettings>("/api/user-settings")
 }
 
 export async function updateUserSettings(
-  body: Partial<Pick<UserSettings, "short_link_public_url" | "short_link_redirect_url">>
+  body: UserSettingsPatch
 ): Promise<UserSettings> {
   return fetchApi<UserSettings>("/api/user-settings", {
     method: "PUT",
+    body: JSON.stringify(body),
+  })
+}
+
+export interface ProxyTestResult {
+  ok: boolean
+  latencyMs?: number
+  message?: string
+}
+
+export async function testWhatsAppProxy(body: {
+  host: string
+  port: number
+  type: WhatsAppProxyType
+}): Promise<ProxyTestResult> {
+  return fetchApi<ProxyTestResult>("/api/user-settings/proxy/test", {
+    method: "POST",
     body: JSON.stringify(body),
   })
 }

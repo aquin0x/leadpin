@@ -1,10 +1,13 @@
 import { useState, useCallback, Suspense } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { Target, LogOut, User, LayoutDashboard, List, MessageCircle } from "lucide-react"
+import { LogOut, Settings, LayoutDashboard, List, MessageCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { StatsBar } from "@/components/dashboard/StatsBar"
 import { FilterBar } from "@/components/dashboard/FilterBar"
 import { ScrapeHistory } from "@/components/dashboard/ScrapeHistory"
+import { LineStatusCard } from "@/components/dashboard/whatsapp/LineStatusCard"
+import { WhatsAppHistorySidebar } from "@/components/dashboard/whatsapp/WhatsAppHistorySidebar"
+import { ListsStatsCards } from "@/components/dashboard/ListsStatsCards"
 import { LeadTable } from "@/components/dashboard/LeadTable"
 import { ScrapePanel } from "@/components/dashboard/ScrapePanel"
 import { useBusinesses } from "@/hooks/useBusinesses"
@@ -125,12 +128,11 @@ function DashboardContent() {
     <div className="min-h-screen bg-zinc-950">
       <header className="sticky top-0 z-30 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between px-4">
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-xl bg-blue-500/10 shadow-lg shadow-blue-500/5">
-              <Target className="size-5 text-blue-400 rotate-12" />
-            </div>
-            <h1 className="font-sans text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
-              LeadPin
+          <div className="flex items-center gap-2.5">
+            <img src="/logo.png" alt="Leadpin" className="size-9 shrink-0" />
+            <h1 className="font-sans text-xl font-bold tracking-tight">
+              <span className="text-white">Lead</span>
+              <span className="text-blue-500">pin</span>
             </h1>
           </div>
 
@@ -141,8 +143,8 @@ function DashboardContent() {
               onClick={() => setAccountOpen(true)}
               className="text-zinc-400 hover:text-zinc-200"
             >
-              <User className="mr-1 size-3.5" />
-              Hesap
+              <Settings className="mr-1 size-3.5" />
+              Ayarlar
             </Button>
             <Button
               variant="ghost"
@@ -209,6 +211,13 @@ function DashboardContent() {
                 <ScrapeHistory />
               </>
             )}
+
+            {currentView === "whatsapp" && (
+              <>
+                <LineStatusCard onManage={() => setAccountOpen(true)} />
+                <WhatsAppHistorySidebar />
+              </>
+            )}
           </div>
 
           <div className="flex-1 min-w-0 min-h-[calc(100vh-7rem)] overflow-x-hidden">
@@ -249,6 +258,7 @@ function DashboardContent() {
                   title="Listelerim"
                   subtitle="Kayıtlı işletme koleksiyonlarınız"
                 />
+                <ListsStatsCards />
                 <SavedLists
                   onSelectList={(id, name) => { setSelectedList({ id, name }); setCurrentView("list_detail") }}
                 />
