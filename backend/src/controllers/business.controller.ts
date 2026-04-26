@@ -162,7 +162,18 @@ export const startScrape = async (req: Request, res: Response) => {
     return res.status(400).json({ message: 'Kategori ve şehir zorunludur' });
   }
 
-  const userId = (req as any).user.id;
+  const user = (req as any).user;
+  const userId = user.id;
+
+  // Plan limiti kontrolü
+  try {
+    const { assertCanScrape, incrementScrape } = await import('../services/subscription');
+    await assertCanScrape(user);
+    // Tarama BAŞLATILDIĞI an sayılır (kullanıcı 250'den fazla iş başlatamaz)
+    await incrementScrape(userId, 1);
+  } catch (e: any) {
+    return res.status(e.statusCode || 500).json({ message: e.message, code: e.code });
+  }
 
   // Create a job record
   const { data, error } = await supabase

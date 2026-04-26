@@ -39,6 +39,15 @@
     },
     "externalBin": [
       "binaries/backend"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "exceptionDomain": "localhost"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+      }
+    }
   }
 }

@@ -303,12 +303,26 @@ export class ScraperService {
 
       const results = Array.from(allUniqueResults.values());
       console.log(`Found ${results.length} total unique potential leads.`);
-      
+
       // Update Total Leads in DB immediately so panel doesn't show 0
       await supabase.from('scrape_jobs').update({
         total_leads: results.length,
         status: 'running'
       }).eq('id', jobId);
+
+      // Plan başına lead saklama limiti: kullanıcının mevcut lead sayısı +
+      // bu taramada eklenebilecek azami yeni lead.
+      let storageLimit = 500;
+      let storedCount = 0;
+      let storageWarned = false;
+      try {
+        const { getOrInitSubscription, getStoredLeadCount } = await import('./subscription');
+        const limits = await getOrInitSubscription({ id: userId } as any);
+        storageLimit = limits.lead_storage;
+        storedCount = await getStoredLeadCount(userId);
+      } catch (e) {
+        console.warn('[scraper] storage limit check skipped:', (e as any)?.message);
+      }
 
       let current = 0;
       for (const res of results) {
@@ -468,13 +482,21 @@ export class ScraperService {
             .eq('id', existing.id);
           dbError = error;
         } else {
+          // Lead saklama limiti kontrolü
+          if (storedCount >= storageLimit) {
+            if (!storageWarned) {
+              console.warn(`[scraper] storage limit reached (${storedCount}/${storageLimit}); skipping new leads`);
+              storageWarned = true;
+            }
+            continue;
+          }
           // Insert new — retry on short_id unique conflict (unlikely but possible)
           let lastErr: any = null;
           for (let attempt = 0; attempt < 5; attempt++) {
             const { error } = await supabase
               .from('businesses')
               .insert({ ...businessData, short_id: generateShortId() });
-            if (!error) { lastErr = null; break; }
+            if (!error) { lastErr = null; storedCount++; break; }
             lastErr = error;
             // Only retry on short_id uniqueness; otherwise bail.
             if (!/short_id/i.test(error.message || '')) break;

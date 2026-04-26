@@ -527,3 +527,96 @@ export const api = {
     fetchApi<T>(url, { method: "PUT", body: body ? JSON.stringify(body) : undefined }),
   delete: <T>(url: string) => fetchApi<T>(url, { method: "DELETE" }),
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// Plan / Abonelik
+// ──────────────────────────────────────────────────────────────────────
+
+export interface PlanCatalogItem {
+  id: string
+  name: string
+  price_usd: number
+  scrape_limit: number
+  message_limit: number
+  lead_storage: number
+  display_order: number
+}
+
+export interface SubscriptionStatus {
+  plan_id: string
+  plan_name: string
+  scrape_limit: number
+  message_limit: number
+  lead_storage: number
+  scrape_used: number
+  message_used: number
+  current_period_start: string
+  current_period_end: string
+  is_admin: boolean
+  lead_count: number
+}
+
+export const getSubscriptionStatus = () =>
+  api.get<SubscriptionStatus>("/api/subscription/status")
+
+export const listPlans = () => api.get<PlanCatalogItem[]>("/api/subscription/plans")
+
+export const redeemSubscriptionToken = (token: string) =>
+  api.post<SubscriptionStatus & { ok: boolean }>("/api/subscription/redeem", { token })
+
+export interface ExpiringLead {
+  id: string
+  name: string
+  created_at: string
+  expires_at: string
+}
+
+export const listExpiringLeads = () =>
+  api.get<{ rows: ExpiringLead[]; total: number }>("/api/subscription/expiring-leads")
+
+// ──────────────────────────────────────────────────────────────────────
+// Medya yükleme (whatsapp-media bucket)
+// ──────────────────────────────────────────────────────────────────────
+
+export interface UploadedMedia {
+  url: string
+  path: string
+  mimeType: string
+  filename: string | null
+  size: number
+}
+
+/**
+ * Bir File objesini whatsapp-media bucket'a yükler ve URL döner.
+ * Şablon / scheduled kampanya feature'ları base64 yerine bunu kullanır.
+ */
+export async function uploadMediaFile(file: File): Promise<UploadedMedia> {
+  const data = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      // "data:image/png;base64,XXXX" → "XXXX"
+      const base64 = result.split(",")[1] || ""
+      resolve(base64)
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+
+  return api.post<UploadedMedia>("/api/storage/upload", {
+    data,
+    mimeType: file.type || "application/octet-stream",
+    filename: file.name,
+  })
+}
+
+export async function deleteUploadedMedia(path: string): Promise<{ ok: boolean }> {
+  const headers = await getAuthHeaders()
+  const r = await fetch(`${API_URL.replace(/\/$/, "")}/api/storage/media`, {
+    method: "DELETE",
+    headers,
+    body: JSON.stringify({ path }),
+  })
+  if (!r.ok) throw new ApiError(`Silme başarısız: ${r.status}`, r.status)
+  return r.json()
+}

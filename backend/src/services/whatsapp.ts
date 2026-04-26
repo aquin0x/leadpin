@@ -62,7 +62,12 @@ interface Session {
   lastError?: string;
 }
 
-const SESSION_ROOT = path.resolve(process.cwd(), '.wwebjs_auth');
+// Üretimde Tauri APP_DATA_DIR env'i ile platforma uygun yazılabilir bir
+// dizin verir (Mac: ~/Library/Application Support/com.leadpin.app,
+// Windows: %APPDATA%\com.leadpin.app, Linux: ~/.local/share/com.leadpin.app).
+// Dev'de cwd'ye düşer.
+const APP_DATA_DIR = process.env.APP_DATA_DIR || process.cwd();
+const SESSION_ROOT = path.resolve(APP_DATA_DIR, '.wwebjs_auth');
 const LINES_FILE = path.join(SESSION_ROOT, '_lines.json');
 
 // Keyed by lineId (UUID)
@@ -728,6 +733,22 @@ export async function startCampaign(params: StartCampaignParams): Promise<Campai
     if (campaign.status === 'running') campaign.status = 'completed';
     campaign.finishedAt = Date.now();
     campaign.currentLead = undefined;
+
+    // Optimist sayım: kampanya başında listSize kadar kotayı düşmüştük.
+    // Skipped (geçersiz numara, WhatsApp hesabı yok) + işlenmemiş (stop edildi)
+    // mesajlar için kotayı geri ödeyelim.
+    try {
+      const { refundMessages } = await import('./subscription');
+      const unprocessed = Math.max(0, campaign.total - campaign.processed);
+      const refundCount = campaign.skipped + unprocessed;
+      if (refundCount > 0) {
+        await refundMessages(userId, refundCount);
+        console.log(`[WA:${userId}] mesaj kotası iade: ${refundCount} (skipped=${campaign.skipped}, unprocessed=${unprocessed})`);
+      }
+    } catch (e: any) {
+      console.warn(`[WA:${userId}] refund failed:`, e.message);
+    }
+
     console.log(`[WA:${userId}] campaign done:`, campaign);
   })().catch((err) => {
     campaign.status = 'failed';

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Loader2, Plus, MessageCircle, Trash2, RefreshCw, Phone, Mail, KeyRound, Eye, EyeOff, Check, Link as LinkIcon, Save, Wifi, X } from "lucide-react"
+import { Loader2, Plus, MessageCircle, Trash2, RefreshCw, Phone, Mail, KeyRound, Eye, EyeOff, Check, Link as LinkIcon, Save, Wifi, X, Sparkles, Zap, Crown, ShieldCheck } from "lucide-react"
 import {
   listWhatsAppLines,
   createWhatsAppLine,
@@ -14,6 +14,8 @@ import {
   getUserSettings,
   updateUserSettings,
   testWhatsAppProxy,
+  getSubscriptionStatus,
+  redeemSubscriptionToken,
   type WhatsAppLine,
   type WhatsAppProxyType,
 } from "@/lib/api-client"
@@ -736,6 +738,161 @@ function WhatsAppProxySection() {
   )
 }
 
+function PlanSection() {
+  const queryClient = useQueryClient()
+  const [tokenInput, setTokenInput] = useState("")
+
+  const { data: status, isLoading } = useQuery({
+    queryKey: ["subscription", "status"],
+    queryFn: getSubscriptionStatus,
+    refetchInterval: 30_000,
+  })
+
+  const redeemMutation = useMutation({
+    mutationFn: (token: string) => redeemSubscriptionToken(token),
+    onSuccess: (res) => {
+      toast.success(`Plan güncellendi: ${res.plan_name}`)
+      setTokenInput("")
+      queryClient.invalidateQueries({ queryKey: ["subscription"] })
+    },
+    onError: (err: any) => toast.error(err.message || "Token kullanılamadı"),
+  })
+
+  if (isLoading || !status) {
+    return (
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="size-5 animate-spin text-zinc-500" />
+        </div>
+      </section>
+    )
+  }
+
+  const planMeta: Record<string, { icon: any; color: string; bg: string }> = {
+    admin:     { icon: ShieldCheck, color: "text-amber-300",  bg: "bg-amber-500/15"  },
+    free:      { icon: Sparkles,    color: "text-zinc-300",   bg: "bg-zinc-700/30"   },
+    pro:       { icon: Zap,         color: "text-emerald-400", bg: "bg-emerald-500/15"},
+    unlimited: { icon: Crown,       color: "text-fuchsia-400", bg: "bg-fuchsia-500/15"},
+  }
+  const meta = planMeta[status.plan_id] || planMeta.free
+  const Icon = meta.icon
+
+  const periodEnd = new Date(status.current_period_end)
+  const daysLeft = Math.max(0, Math.ceil((periodEnd.getTime() - Date.now()) / (24 * 3600 * 1000)))
+
+  const usageBar = (used: number, limit: number, color: string) => {
+    const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0
+    const danger = pct >= 90
+    return (
+      <div className="space-y-1">
+        <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+          <div
+            className={`h-full transition-all ${danger ? "bg-red-500" : color}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className={`flex size-9 items-center justify-center rounded-lg ${meta.bg}`}>
+            <Icon className={`size-5 ${meta.color}`} />
+          </div>
+          <div>
+            <div className="font-semibold text-zinc-100">{status.plan_name} Plan</div>
+            {!status.is_admin && (
+              <div className="text-xs text-zinc-500">
+                {daysLeft > 0 ? `${daysLeft} gün kaldı` : "Süresi doldu"}
+              </div>
+            )}
+          </div>
+        </div>
+        {!status.is_admin && status.plan_id === "free" && (
+          <a
+            href="https://leadpin.com.tr/plans"
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-semibold text-emerald-400 hover:text-emerald-300"
+          >
+            Yükselt →
+          </a>
+        )}
+      </div>
+
+      {!status.is_admin && (
+        <>
+          <div className="grid gap-3">
+            <div>
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="text-zinc-400">Tarama</span>
+                <span className="font-mono text-zinc-300">
+                  {status.scrape_used.toLocaleString("tr-TR")} / {status.scrape_limit.toLocaleString("tr-TR")}
+                </span>
+              </div>
+              {usageBar(status.scrape_used, status.scrape_limit, "bg-blue-500")}
+            </div>
+            <div>
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="text-zinc-400">Mesaj (manuel/toplu)</span>
+                <span className="font-mono text-zinc-300">
+                  {status.message_used.toLocaleString("tr-TR")} / {status.message_limit.toLocaleString("tr-TR")}
+                </span>
+              </div>
+              {usageBar(status.message_used, status.message_limit, "bg-emerald-500")}
+            </div>
+            <div>
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="text-zinc-400">Saklı Lead</span>
+                <span className="font-mono text-zinc-300">
+                  {status.lead_count.toLocaleString("tr-TR")} / {status.lead_storage.toLocaleString("tr-TR")}
+                </span>
+              </div>
+              {usageBar(status.lead_count, status.lead_storage, "bg-purple-500")}
+            </div>
+          </div>
+
+          <div className="border-t border-zinc-800 pt-3 space-y-2">
+            <div className="flex items-center gap-2 text-xs text-zinc-400">
+              <KeyRound className="size-3.5" />
+              <span>Plan Aktivasyon Kodu</span>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value.toUpperCase())}
+                placeholder="LP-PRO-XXXXXXXXXXXX"
+                className="h-9 border-zinc-700 bg-zinc-950/40 font-mono text-sm tracking-wider"
+                disabled={redeemMutation.isPending}
+              />
+              <Button
+                onClick={() => tokenInput.trim() && redeemMutation.mutate(tokenInput.trim())}
+                disabled={!tokenInput.trim() || redeemMutation.isPending}
+                className="h-9 bg-emerald-600 hover:bg-emerald-500 text-white shrink-0"
+              >
+                {redeemMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : "Kullan"}
+              </Button>
+            </div>
+            <p className="text-[10px] text-zinc-500 leading-relaxed">
+              Siteden satın aldığınız aktivasyon kodunu yapıştırın. Plan ve dönem hemen aktifleşir,
+              mevcut kullanım sayaçlarınız sıfırlanır.
+            </p>
+          </div>
+        </>
+      )}
+
+      {status.is_admin && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+          Admin hesabı — tüm limitler bypass.
+        </div>
+      )}
+    </section>
+  )
+}
+
 export function AccountDialog({ open, onOpenChange }: Props) {
   const [lines, setLines] = useState<WhatsAppLine[]>([])
   const [adding, setAdding] = useState(false)
@@ -831,6 +988,9 @@ export function AccountDialog({ open, onOpenChange }: Props) {
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Plan & Aktivasyon */}
+          <PlanSection />
+
           {/* Hesap Bilgileri */}
           <ProfileSection />
 

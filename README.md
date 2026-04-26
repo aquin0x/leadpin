@@ -6,13 +6,29 @@ Google Haritalar üzerinden işletme tarayan, Excel/manuel numaralarla listeler 
 
 ---
 
-## 🚀 Hızlı başlangıç
+## 📥 İndir (son kullanıcı)
+
+**[En son sürümü indir → Releases](../../releases/latest)**
+
+- **Windows:** `LeadPin_*_x64-setup.exe`
+- **macOS (M1/M2/M3):** `LeadPin_*_aarch64.dmg`
+- **macOS (Intel):** `LeadPin_*_x64.dmg`
+- **Linux:** `*.AppImage` (taşınabilir) veya `*.deb` (Ubuntu/Debian)
+
+> macOS'ta imzasız bundle ilk açılışta Gatekeeper'a takılır. Sağ tık → **Aç** → onayla, sonraki açılışlar serbest.
+
+---
+
+## 🚀 Hızlı başlangıç (geliştirici)
 
 ### Gereksinimler
 
 - **Node.js** 18+ ([nodejs.org](https://nodejs.org))
 - **Rust** + Cargo ([rustup.rs](https://rustup.rs))
-- **Visual Studio Build Tools** (Windows, "Desktop development with C++" workload)
+- **Platforma özel build araçları:**
+  - **Windows:** Visual Studio Build Tools — "Desktop development with C++" workload
+  - **macOS:** Xcode Command Line Tools — `xcode-select --install`
+  - **Linux:** `webkit2gtk-4.1`, `libssl-dev`, `libgtk-3-dev` (Ubuntu/Debian)
 - **Supabase projesi** (kendi ücretsiz hesabın yeterli)
 
 ### Kurulum
@@ -36,12 +52,20 @@ copy backend\.env.example backend\.env
 İki ayrı terminal aç:
 
 **Terminal 1 — Backend (sidecar):**
-```powershell
+```bash
 cd backend
 npm run dev
 ```
 
 **Terminal 2 — Tauri + Frontend:**
+
+macOS / Linux:
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run tauri:dev
+```
+
+Windows (PowerShell):
 ```powershell
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 npm run tauri:dev
@@ -49,11 +73,73 @@ npm run tauri:dev
 
 ### Production Build
 
+**Windows:**
 ```powershell
 .\build.ps1
 ```
-
 Çıktı: `src-tauri/target/release/bundle/nsis/LeadPin_<versiyon>_x64-setup.exe`
+
+**macOS:**
+```bash
+chmod +x build.sh
+./build.sh
+```
+Çıktı: `src-tauri/target/release/bundle/dmg/LeadPin_<versiyon>_<arch>.dmg`
+- Apple Silicon (M1/M2/M3) Mac'te otomatik `aarch64-apple-darwin` build
+- Intel Mac'te otomatik `x86_64-apple-darwin` build
+- Universal binary ister misin? Önce `aarch64`'te bir kez, sonra `x86_64`'te tekrar build edip `lipo` ile birleştir.
+
+**Linux:**
+```bash
+chmod +x build.sh
+./build.sh
+```
+Çıktı: `src-tauri/target/release/bundle/deb/*.deb` ve `bundle/appimage/*.AppImage`
+
+> **Not:** Build script'i hangi OS'ta çalıştırıldıysa o OS için artefakt üretir.
+> Cross-compile (Mac'te Windows binary üretmek vs.) Tauri ile resmi olarak desteklenmez —
+> her platform için ayrı bir build makinesi (veya GitHub Actions matrix) gerekir.
+
+### GitHub Actions ile otomatik release (önerilen)
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) — tag push'ta veya manuel
+tetiklenince **4 platform için paralel build** çalışır ve hepsi GitHub Releases'a yüklenir:
+- `LeadPin_*.exe` (Windows NSIS installer)
+- `LeadPin_*_aarch64.dmg` (Mac Apple Silicon)
+- `LeadPin_*_x64.dmg` (Mac Intel)
+- `*.deb` + `*.AppImage` (Linux)
+
+**İlk kurulum:**
+
+1. Repository → Settings → Secrets and variables → Actions → bu üç secret'ı ekle:
+   ```
+   SUPABASE_URL                = https://your-project.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY   = eyJ...
+   SUPABASE_ACCESS_TOKEN       = sbp_...
+   ```
+
+2. Yeni release çıkarmak için:
+   ```bash
+   git tag v0.1.1
+   git push origin v0.1.1
+   ```
+   ~10 dakika sonra Actions sekmesinde 4 build paralel biter, GitHub Releases altında
+   draft release oluşur (sen yayınla butonuna basana kadar gizli).
+
+3. **Manuel test build** (tag oluşturmadan): Actions sekmesi → "Release" workflow → "Run workflow"
+   → tag adı yaz → çalıştır.
+
+**Mac imzalama (opsiyonel, Gatekeeper temiz dağıtım için):**
+- Apple Developer hesabı ($99/yıl) → "Developer ID Application" sertifikası al
+- Sertifikayı `.p12` olarak export et, base64'e çevir, secret'a ekle:
+  - `APPLE_CERTIFICATE` (base64 .p12)
+  - `APPLE_CERTIFICATE_PASSWORD`
+  - `APPLE_SIGNING_IDENTITY` (örn. "Developer ID Application: Adın Soyadın")
+  - `APPLE_ID`, `APPLE_PASSWORD` (App-Specific Password), `APPLE_TEAM_ID`
+- `tauri-action` bu env'leri otomatik algılayıp imzalar + notarize eder
+
+**Maliyet:** GitHub Actions runner saatleri public repo'da ücretsiz. Private repo'da
+ayda ~2000 dakika ücretsiz; bir release ~30 dk runner kullanır → ayda 60+ release atabilirsin.
 
 ---
 
@@ -138,6 +224,90 @@ backend/schema.sql
 ```
 
 İçinde tüm tablolar, RLS politikaları, indexler ve `track_short_id_click` RPC fonksiyonu var. `IF NOT EXISTS` ile yazıldığı için tekrar çalıştırmak güvenlidir; mevcut veriyi bozmaz.
+
+### Plan / Abonelik / Token Yönetimi (admin için)
+
+Uygulama 3 plan kullanır + admin:
+
+| Plan | Aylık tarama | Aylık manuel/toplu mesaj | Saklı lead | Fiyat |
+|------|--------------|--------------------------|------------|-------|
+| Free | 250 | 100 | 500 | $0 |
+| Pro | 1.500 | 1.000 | 500 | $10 |
+| Sınırsız | 10.000 | 5.000 | 500 | $20 |
+| Admin | sınırsız | sınırsız | sınırsız | — |
+
+**Akış:** Müşteri sitede ödeme yapar → admin Supabase'de token üretir → müşteri uygulamada Ayarlar → Plan sekmesinden token girer → plan aktifleşir.
+
+#### 1. Kendi hesabını admin yap
+
+```sql
+update auth.users
+set raw_app_meta_data =
+  coalesce(raw_app_meta_data, '{}'::jsonb) || jsonb_build_object('is_admin', true)
+where email = 'sizin@email.com';
+```
+
+Admin hesabında tüm limitler bypass edilir, hiçbir token girmesine gerek yok.
+
+#### 2. Tek aktivasyon kodu üret (Pro, 30 gün)
+
+```sql
+-- Token formatı: LP-<PLAN>-<12 karakter>
+insert into public.subscription_tokens (token, plan_id, duration_days, note)
+values (
+  'LP-PRO-' || upper(substring(md5(random()::text), 1, 12)),
+  'pro',
+  30,
+  'Müşteri: Ahmet Yılmaz - Sipariş #123'
+)
+returning token;
+-- Çıktıdaki "token" değerini müşteriye yolla.
+```
+
+#### 3. Toplu kod üret (10 adet Pro)
+
+```sql
+insert into public.subscription_tokens (token, plan_id, duration_days, note)
+select
+  'LP-PRO-' || upper(substring(md5(random()::text || gs::text), 1, 12)),
+  'pro',
+  30,
+  'Toplu üretim ' || now()::date
+from generate_series(1, 10) gs
+returning token;
+```
+
+#### 4. Token'ı iptal et (kullanılmamış olmalı)
+
+```sql
+update public.subscription_tokens
+set status = 'cancelled'
+where token = 'LP-PRO-XXXXXXXXXXXX' and status = 'unredeemed';
+```
+
+#### 5. Mevcut aboneliği kontrol et
+
+```sql
+select s.plan_id, s.scrape_used, s.message_used,
+       s.current_period_end, u.email
+from public.subscriptions s
+join auth.users u on u.id = s.user_id
+order by s.updated_at desc;
+```
+
+#### 6. Token kullanım raporu
+
+```sql
+select t.token, t.plan_id, t.status, t.created_at, t.redeemed_at, u.email
+from public.subscription_tokens t
+left join auth.users u on u.id = t.redeemed_by
+order by t.created_at desc
+limit 50;
+```
+
+> **`unlimited` plan için kod üretmek istersen** `'LP-PRO-'` yerine `'LP-UNL-'` ve `'pro'` yerine `'unlimited'` kullan.
+
+---
 
 ### Son adım: kendine `link_owner` yetkisi ver
 
@@ -228,6 +398,21 @@ npx @tauri-apps/cli icon path/to/logo.png
 ### Backend "Connection closed" / Puppeteer crash
 - `.env`'de `PUPPETEER_HEADLESS=true` mu?
 - `backend/.cache/` veya `.wwebjs_auth/` bozulmuş olabilir, sil ve yeniden başlat.
+
+### macOS: "App can't be opened because Apple cannot check it for malicious software"
+İmzasız .dmg ilk açılışta Gatekeeper tarafından engellenir. Çözüm:
+- Uygulamayı Finder'da bulun, **sağ tık → Aç** → onay penceresinde tekrar **Aç**
+- Veya terminal: `sudo xattr -d com.apple.quarantine /Applications/LeadPin.app`
+- Kalıcı çözüm: Apple Developer ID ile imzalama + notarization (production dağıtımda gerekli)
+
+### macOS: Sidecar permission denied
+`build.sh` chmod +x yapıyor ama eski binary kalmışsa:
+```bash
+chmod +x src-tauri/binaries/backend-*
+```
+
+### Linux: webkit2gtk eksik
+Ubuntu 22.04+ için: `sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0`. Eski sürümlerde `webkit2gtk-4.0` paketi gerekebilir.
 
 ### WhatsApp QR sürekli yenileniyor
 Hat ekledikten sonra 30 saniye içinde tara. Yenileniyorsa `Hatlar → 🔄 Yeniden bağlan` kullan.

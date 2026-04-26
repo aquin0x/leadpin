@@ -275,6 +275,73 @@ alter table public.user_settings
 
 
 -- ============================================================================
+-- 3.5) PLAN / ABONELİK / TOKEN SİSTEMİ
+-- ============================================================================
+-- Ödeme uygulamada YOK. Müşteri site üzerinden ödeme yapar, admin Supabase'de
+-- subscription_tokens tablosuna bir token üretir, müşteriye iletir, müşteri
+-- uygulamada Ayarlar → Plan sekmesinden token'ı girer ve plan aktifleşir.
+--
+-- Free plan herkesin default'u — period her 30 günde otomatik roll olur.
+-- Paid plan tokeni redeem edildiğinde period_start = redeem_at, +30 gün end.
+-- Admin = auth.users.raw_app_meta_data.is_admin = true → tüm limitler bypass.
+
+-- 3.5.1) plans — plan tanımları (referans tablosu)
+create table if not exists public.plans (
+  id              text primary key,                 -- 'free' | 'pro' | 'unlimited'
+  name            text not null,
+  price_usd       numeric(8,2) not null default 0,
+  scrape_limit    int not null,                     -- aylık tarama hakkı
+  message_limit   int not null,                     -- aylık manuel/toplu mesaj hakkı
+  lead_storage    int not null default 500,         -- kullanıcı başına saklanan lead limiti (tüm planlar 500)
+  display_order   int not null default 0
+);
+
+insert into public.plans (id, name, price_usd, scrape_limit, message_limit, lead_storage, display_order)
+values
+  ('free',      'Ücretsiz', 0,  250,   100,  500, 1),
+  ('pro',       'Pro',      10, 1500,  1000, 500, 2),
+  ('unlimited', 'Sınırsız', 20, 10000, 5000, 500, 3)
+on conflict (id) do update set
+  name = excluded.name,
+  price_usd = excluded.price_usd,
+  scrape_limit = excluded.scrape_limit,
+  message_limit = excluded.message_limit,
+  lead_storage = excluded.lead_storage,
+  display_order = excluded.display_order;
+
+
+-- 3.5.2) subscription_tokens — admin tarafından üretilen aktivasyon kodları
+create table if not exists public.subscription_tokens (
+  id                uuid primary key default gen_random_uuid(),
+  token             text unique not null,           -- LP-PRO-XXXXXXXXXXXX format
+  plan_id           text not null references public.plans(id),
+  status            text not null default 'unredeemed'
+                    check (status in ('unredeemed','redeemed','expired','cancelled')),
+  duration_days     int  not null default 30,       -- kaç gün hak tanır
+  note              text,                           -- admin notu (örn. "Ahmet Y. - sipariş #123")
+  redeemed_by       uuid references auth.users(id) on delete set null,
+  redeemed_at       timestamptz,
+  created_at        timestamptz not null default now()
+);
+
+create index if not exists idx_tokens_status on public.subscription_tokens (status);
+create index if not exists idx_tokens_redeemed_by on public.subscription_tokens (redeemed_by);
+
+
+-- 3.5.3) subscriptions — kullanıcı başına tek kayıt; aktif plan + dönem
+create table if not exists public.subscriptions (
+  user_id              uuid primary key references auth.users(id) on delete cascade,
+  plan_id              text not null default 'free' references public.plans(id),
+  current_period_start timestamptz not null default now(),
+  current_period_end   timestamptz not null default (now() + interval '30 days'),
+  redeemed_token_id    uuid references public.subscription_tokens(id) on delete set null,
+  scrape_used          int  not null default 0,
+  message_used         int  not null default 0,
+  updated_at           timestamptz not null default now()
+);
+
+
+-- ============================================================================
 -- 4) RPC: TIKLAMA TAKİBİ (anon role'den çağrılır — public click)
 -- ============================================================================
 
@@ -390,6 +457,186 @@ alter table public.user_settings enable row level security;
 drop policy if exists "user_settings_own" on public.user_settings;
 create policy "user_settings_own" on public.user_settings for all to authenticated
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+
+-- 5.4) Plan / Abonelik
+alter table public.plans                enable row level security;
+alter table public.subscriptions        enable row level security;
+alter table public.subscription_tokens  enable row level security;
+
+-- plans: herkes okuyabilir (public katalog)
+drop policy if exists "plans_read_all" on public.plans;
+create policy "plans_read_all" on public.plans for select to authenticated using (true);
+
+-- subscriptions: kullanıcı sadece kendininkini okuyabilir (yazma backend'den)
+drop policy if exists "subscriptions_select_own" on public.subscriptions;
+create policy "subscriptions_select_own" on public.subscriptions for select to authenticated
+  using (auth.uid() = user_id);
+
+-- subscription_tokens: kullanıcılar tabloya doğrudan erişemez; tüm okuma/yazma
+-- service_role (backend) üzerinden — RLS açık, policy yok = herkes deny.
+-- Sadece admin'in raw_app_meta_data.is_admin=true ise SELECT'e izin verelim
+-- (ileride admin paneli için).
+drop policy if exists "tokens_admin_read" on public.subscription_tokens;
+create policy "tokens_admin_read" on public.subscription_tokens for select to authenticated
+  using (
+    coalesce((auth.jwt() -> 'app_metadata' ->> 'is_admin')::boolean, false) = true
+  );
+
+
+-- ============================================================================
+-- 5.5) OTOMATİK TEMİZLİK FONKSİYONLARI
+-- ============================================================================
+-- 60 gün boyunca listelenmemiş ve mesaj atılmamış lead'ler ile eski
+-- outreach_logs kayıtlarını siler. Supabase Free tier egress + storage'ı
+-- korumak için kritik. pg_cron ile günlük çalıştırılır (aşağıda).
+
+-- 5.5.1) Kullanılmayan businesses temizliği
+-- Silme kriterleri (3'ü de ŞART):
+--   1. created_at 60 günden eski
+--   2. Hiçbir list_items'da değil (kullanıcı hiç listeye eklemedi)
+--   3. Hiçbir outreach_logs'da değil (mesaj atılmadı)
+create or replace function public.cleanup_unused_businesses()
+returns int
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  deleted_count int;
+begin
+  with deleted as (
+    delete from public.businesses b
+    where b.created_at < now() - interval '60 days'
+      and not exists (select 1 from public.list_items li where li.business_id = b.id)
+      and not exists (select 1 from public.outreach_logs ol where ol.business_id = b.id)
+    returning b.id
+  )
+  select count(*) into deleted_count from deleted;
+  return deleted_count;
+end;
+$$;
+
+-- 5.5.2) Eski outreach_logs temizliği (60 günden eski)
+create or replace function public.cleanup_old_outreach_logs()
+returns int
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  deleted_count int;
+begin
+  with deleted as (
+    delete from public.outreach_logs
+    where created_at < now() - interval '60 days'
+    returning id
+  )
+  select count(*) into deleted_count from deleted;
+  return deleted_count;
+end;
+$$;
+
+-- 5.5.3) Silinme uyarısı için view: 7 gün içinde silinecek lead'ler
+-- (frontend banner'ında "X leadin yakında silinecek" göstermek için)
+create or replace view public.businesses_expiring_soon as
+select b.user_id,
+       b.id,
+       b.name,
+       b.created_at,
+       b.created_at + interval '60 days' as expires_at
+from public.businesses b
+where b.created_at < now() - interval '53 days'
+  and b.created_at >= now() - interval '60 days'
+  and not exists (select 1 from public.list_items li where li.business_id = b.id)
+  and not exists (select 1 from public.outreach_logs ol where ol.business_id = b.id);
+
+grant select on public.businesses_expiring_soon to authenticated;
+
+
+-- ============================================================================
+-- 5.6) PG_CRON — GÜNLÜK OTOMATİK TEMİZLİK
+-- ============================================================================
+-- ÖNEMLİ: pg_cron extension'ı Supabase Dashboard'dan açılmalı:
+--   Database → Extensions → "pg_cron" → Enable
+-- Bu adım yapılmadıysa aşağıdaki SQL hata verir; o zaman fonksiyonları
+-- elle çağır veya backend'den günlük cron ile çalıştır.
+--
+-- Aşağıdaki blok pg_cron varsa schedule'ları kurar; yoksa atla.
+
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    -- Mevcut job varsa sil (idempotent)
+    perform cron.unschedule(jobid)
+      from cron.job
+      where jobname in ('leadpin_cleanup_businesses', 'leadpin_cleanup_outreach');
+
+    -- Her gün 03:00 UTC (Türkiye saati 06:00) — kullanıcı az aktif
+    perform cron.schedule(
+      'leadpin_cleanup_businesses',
+      '0 3 * * *',
+      $cmd$ select public.cleanup_unused_businesses(); $cmd$
+    );
+    perform cron.schedule(
+      'leadpin_cleanup_outreach',
+      '0 3 * * *',
+      $cmd$ select public.cleanup_old_outreach_logs(); $cmd$
+    );
+
+    raise notice 'pg_cron job''ları kuruldu (her gün 03:00 UTC)';
+  else
+    raise notice 'pg_cron extension yok; otomatik temizlik manuel çalıştırılmalı';
+  end if;
+end
+$$;
+
+
+-- ============================================================================
+-- 5.7) SUPABASE STORAGE — whatsapp-media bucket
+-- ============================================================================
+-- WhatsApp şablonlarına / scheduled kampanyalara eklenen resim, video, doküman
+-- gibi medya dosyaları için. Base64'ü DB'ye yazmak yerine bucket'a yükleyip
+-- sadece URL'i kaydedeceğiz — egress + storage tasarrufu.
+--
+-- Bucket ilk kez yaratılırken Storage RLS policy'leri de eklenmeli.
+-- Aşağıdaki SQL idempotent: bucket varsa atlar.
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'whatsapp-media',
+  'whatsapp-media',
+  true,                                           -- public read (mesajda doğrudan URL gönderiyoruz)
+  16 * 1024 * 1024,                               -- 16 MB max (WhatsApp limit civarı)
+  array['image/jpeg','image/png','image/webp','image/gif',
+        'video/mp4','video/3gpp','video/quicktime',
+        'audio/mpeg','audio/ogg','audio/mp4',
+        'application/pdf']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+-- Storage RLS: kullanıcılar sadece kendi klasörlerine yazabilir/silebilir,
+-- okuma public (mesaj alıcılarının erişebilmesi için).
+drop policy if exists "wa_media_public_read" on storage.objects;
+create policy "wa_media_public_read" on storage.objects for select
+  using (bucket_id = 'whatsapp-media');
+
+drop policy if exists "wa_media_owner_write" on storage.objects;
+create policy "wa_media_owner_write" on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'whatsapp-media'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "wa_media_owner_delete" on storage.objects;
+create policy "wa_media_owner_delete" on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'whatsapp-media'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
 
 
 -- ============================================================================

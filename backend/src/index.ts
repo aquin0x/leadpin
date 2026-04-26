@@ -7,8 +7,16 @@ import { authMiddleware } from './middleware/auth';
 import { supabase } from './utils/supabase';
 import whatsappRoutes from './routes/whatsapp.routes';
 import userSettingsRoutes from './routes/user-settings.routes';
+import subscriptionRoutes from './routes/subscription.routes';
+import storageRoutes from './routes/storage.routes';
 
-dotenv.config();
+// Tauri prod modunda ENV_FILE_PATH env'i ile bundle'ın resource klasöründeki
+// backend.env'i geçer; dev modunda dosya backend/.env'den okunur.
+if (process.env.ENV_FILE_PATH) {
+  dotenv.config({ path: process.env.ENV_FILE_PATH });
+} else {
+  dotenv.config();
+}
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -252,6 +260,12 @@ app.use('/api/whatsapp', whatsappRoutes);
 
 // User Settings (short link domain + WhatsApp proxy)
 app.use('/api/user-settings', userSettingsRoutes);
+
+// Plan / abonelik / token redeem
+app.use('/api/subscription', subscriptionRoutes);
+
+// Medya yükleme (whatsapp-media bucket)
+app.use('/api/storage', storageRoutes);
 
 // List Management Routes
 app.get('/api/lists', authMiddleware, getLists);

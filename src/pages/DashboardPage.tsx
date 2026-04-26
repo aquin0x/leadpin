@@ -8,6 +8,8 @@ import { ScrapeHistory } from "@/components/dashboard/ScrapeHistory"
 import { LineStatusCard } from "@/components/dashboard/whatsapp/LineStatusCard"
 import { WhatsAppHistorySidebar } from "@/components/dashboard/whatsapp/WhatsAppHistorySidebar"
 import { ListsStatsCards } from "@/components/dashboard/ListsStatsCards"
+import { ExpiringLeadsBanner } from "@/components/dashboard/ExpiringLeadsBanner"
+import { LimitWarningBanner } from "@/components/dashboard/LimitWarningBanner"
 import { LeadTable } from "@/components/dashboard/LeadTable"
 import { ScrapePanel } from "@/components/dashboard/ScrapePanel"
 import { useBusinesses } from "@/hooks/useBusinesses"
@@ -159,7 +161,8 @@ function DashboardContent() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1800px] px-6 py-6 md:px-8">
+      <main className="mx-auto max-w-[1800px] px-6 py-6 md:px-8 space-y-4">
+        <LimitWarningBanner />
         <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
           <div className="flex w-full flex-col gap-6 lg:w-[260px] lg:shrink-0 lg:sticky lg:top-24">
             <div className="flex flex-col gap-1.5 rounded-2xl border border-zinc-800/50 bg-zinc-900/40 p-2 backdrop-blur-sm">
@@ -229,6 +232,7 @@ function DashboardContent() {
                   title="Leads"
                   subtitle="Toplanan işletmeler"
                 />
+                <ExpiringLeadsBanner />
                 <StatsBar />
                 <LeadTable
                   data={data}

@@ -11,6 +11,11 @@ import {
   getCampaign,
   sendSingleMessage,
 } from '../services/whatsapp';
+import {
+  assertCanSendMessages,
+  incrementMessages,
+} from '../services/subscription';
+import { supabase } from '../utils/supabase';
 
 function userId(req: Request): string {
   return (req as any).user.id;
@@ -75,6 +80,21 @@ export const startWhatsAppCampaign = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'listId ve messageTemplate zorunlu' });
     }
 
+    // Plan limiti: liste boyutu kadar mesaj kotası lazım
+    const user = (req as any).user;
+    const { count: listSize } = await supabase
+      .from('list_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('list_id', listId);
+    try {
+      await assertCanSendMessages(user, listSize || 0);
+    } catch (e: any) {
+      return res.status(e.statusCode || 500).json({ message: e.message, code: e.code });
+    }
+    // Optimist sayım — kampanya başladıysa kotaya dahil et. Skipped olanları
+    // geri ödeme yapmıyoruz (basitlik için; kullanıcı için biraz konservatif).
+    await incrementMessages(uid, listSize || 0);
+
     const campaign = await startCampaign({
       userId: uid,
       listId,
@@ -107,8 +127,17 @@ export const sendSingle = async (req: Request, res: Response) => {
     if (!businessId || !message) {
       return res.status(400).json({ message: 'businessId ve message zorunlu' });
     }
+    // Plan limiti: 1 mesajlık kota
+    try {
+      await assertCanSendMessages((req as any).user, 1);
+    } catch (e: any) {
+      return res.status(e.statusCode || 500).json({ message: e.message, code: e.code });
+    }
     const result = await sendSingleMessage({ userId: uid, businessId, message, lineId, media });
-    if (result.ok) return res.json(result);
+    if (result.ok) {
+      await incrementMessages(uid, 1);
+      return res.json(result);
+    }
     if (result.reason === 'not_ready' || result.reason === 'no_line') {
       return res.status(409).json({
         ok: false,
