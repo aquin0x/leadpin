@@ -73,10 +73,17 @@ Sets up Postgres locally, defines the whole schema in Drizzle, generates the fir
 cd backend
 npm install drizzle-orm pg jsonwebtoken
 npm install -D drizzle-kit @types/pg @types/jsonwebtoken
-npm uninstall @supabase/supabase-js lucide-react
+npm uninstall lucide-react
 ```
 
 `lucide-react` is a frontend icon library that was installed into the backend by mistake; it has no importer in `backend/src`. Removing it here is not scope creep, it is deleting a dependency this task's `npm ci` would otherwise keep shipping into the image.
+
+> **`@supabase/supabase-js` stays installed until Task 9.** Its last importer,
+> `backend/src/utils/supabase.ts`, is not deleted until then, so removing the
+> package here leaves an unbuildable intermediate state — `tsc` may still pass
+> locally because the folder lingers in `node_modules`, but `npm ci` in the
+> Docker build would fail. Run `npm prune` after any uninstall so the working
+> tree matches `package.json`.
 
 - [ ] **Step 2: Local Postgres for development**
 
@@ -1411,6 +1418,15 @@ rm backend/src/utils/supabase.ts backend/schema.sql
 grep -rn "supabase" backend/src/
 ```
 Expected: no matches.
+
+Now that the last importer is gone, drop the package and align `node_modules`:
+
+```bash
+cd backend && npm uninstall @supabase/supabase-js && npm prune
+npx tsc --noEmit
+```
+Expected: exit 0. If `tsc` still passes only because a stale `node_modules/@supabase`
+folder remains, `npm prune` removes it — verify with `ls node_modules/@supabase`.
 
 - [ ] **Step 6: Close the pool on shutdown**
 

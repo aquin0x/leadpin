@@ -1,0 +1,29 @@
+# Yerel geliştirme için Postgres. Sunucudaki merkezi örnekle aynı ana sürüm
+# (postgres:18-alpine) — üretimde çalışan SQL'in burada da çalışması için.
+#
+# Başlat: docker compose -f backend/docker-compose.dev.yml up -d
+# Durdur: docker compose -f backend/docker-compose.dev.yml down
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: leadpin-dev-db
+    environment:
+      POSTGRES_USER: leadpin
+      POSTGRES_PASSWORD: leadpin
+      POSTGRES_DB: leadpin
+    ports:
+      # 55432: yerelde çalışan başka bir Postgres ile çakışmasın
+      - "55432:5432"
+    volumes:
+      # Postgres 18 ile birlikte önerilen bağlama noktası /var/lib/postgresql
+      # oldu (veri artık altındaki sürüme özel bir dizine yazılıyor).
+      # /var/lib/postgresql/data bağlamak imajın açılışta hata vermesine yol açar.
+      - leadpin_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leadpin -d leadpin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  leadpin_pgdata:

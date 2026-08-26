@@ -96,3 +96,6 @@ coverage/
 .eslintcache
 .parcel-cache/
 *.tsbuildinfo
+
+# Yerel geliştirme Postgres verisi (docker volume kullanılıyor, yine de)
+backend/pgdata/
