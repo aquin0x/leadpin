@@ -17,6 +17,7 @@ import authRoutes from './routes/auth.routes';
 import { seedAdminUser } from './services/auth';
 import { MEDIA_DIR } from './services/media';
 import { startCleanupScheduler } from './services/cleanup';
+import { startScheduler } from './services/scheduler';
 
 // Tauri prod modunda ENV_FILE_PATH env'i ile bundle'ın resource klasöründeki
 // backend.env'i geçer; dev modunda dosya backend/.env'den okunur.
@@ -360,6 +361,8 @@ const server = app.listen(Number(port), '0.0.0.0', () => {
     .then(() => {
       // pg_cron yerine — 60 günden eski kullanılmamış lead ve log temizliği.
       startCleanupScheduler();
+      // Zamanlanmış WhatsApp kampanyaları
+      startScheduler();
       return import('./services/whatsapp').then(({ bootstrapLines }) =>
         bootstrapLines().catch((e) => console.error('WA bootstrap failed:', e?.message)),
       );

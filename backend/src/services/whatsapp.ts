@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import { db } from '../db/client';
 import { businesses, listItems, outreachLogs, userSettings, whatsappLines } from '../db/schema';
+import { attachAutomation } from './automation';
 
 type Client = WAClient;
 
@@ -301,6 +302,9 @@ async function createSession(meta: LineMeta): Promise<Session> {
     session.lastError = String(reason);
     console.warn(`[WA:${meta.id}] disconnected:`, reason);
   });
+
+  // Karşılama ve anahtar kelime oto-cevapları bu dinleyiciden çalışır.
+  attachAutomation(client, meta.id, meta.userId);
 
   sessions.set(meta.id, session);
   return session;
