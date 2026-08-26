@@ -11,6 +11,9 @@ import whatsappRoutes from './routes/whatsapp.routes';
 import userSettingsRoutes from './routes/user-settings.routes';
 import subscriptionRoutes from './routes/subscription.routes';
 import storageRoutes from './routes/storage.routes';
+import authRoutes from './routes/auth.routes';
+import { seedPlans } from './db/client';
+import { seedAdminUser } from './services/auth';
 
 // Tauri prod modunda ENV_FILE_PATH env'i ile bundle'ın resource klasöründeki
 // backend.env'i geçer; dev modunda dosya backend/.env'den okunur.
@@ -282,6 +285,9 @@ app.post('/api/admin/clear-data', authMiddleware, (req, res) => {
   return clearAllData(req, res);
 });
 
+// Kimlik doğrulama (kayıt / giriş / profil)
+app.use('/api/auth', authRoutes);
+
 // WhatsApp Campaign Routes
 app.use('/api/whatsapp', whatsappRoutes);
 
@@ -374,9 +380,17 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 const server = app.listen(Number(port), '0.0.0.0', () => {
   console.log(`🚀 LeadPin API runs on port ${port}`);
-  import('./services/whatsapp').then(({ bootstrapLines }) => {
-    bootstrapLines().catch((e) => console.error('WA bootstrap failed:', e?.message));
-  });
+
+  // Referans verisi ve ilk kullanıcı — WhatsApp hatlarından önce, çünkü hatlar
+  // artık veritabanından okunuyor.
+  seedPlans()
+    .then(() => seedAdminUser())
+    .then(() => {
+      return import('./services/whatsapp').then(({ bootstrapLines }) =>
+        bootstrapLines().catch((e) => console.error('WA bootstrap failed:', e?.message)),
+      );
+    })
+    .catch((e) => console.error('[boot] açılış hazırlığı başarısız:', e?.message));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

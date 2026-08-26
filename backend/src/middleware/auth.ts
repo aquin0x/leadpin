@@ -1,32 +1,35 @@
 import { Request, Response, NextFunction } from 'express';
-import { supabase } from '../utils/supabase';
+import { verifyToken, findUserById } from '../services/auth';
 
+/**
+ * Bearer JWT doğrular ve req.user'a AuthUser yerleştirir.
+ *
+ * Not: jeton eskiden `?token=` query param'ı ile de kabul ediliyordu. Bu
+ * kaldırıldı — ters vekilin access log'una JWT yazılmasına yol açıyordu.
+ * Kullanan tek yer SSE endpoint'iydi, o da frontend tarafından kullanılmıyor.
+ */
 export const authMiddleware = async (req: Request, res: Response, next: NextFunction) => {
-  const authHeader = req.headers.authorization;
-  const queryToken = req.query.token as string;
-
-  let token = authHeader ? authHeader.split(' ')[1] : queryToken;
+  const header = req.headers.authorization;
+  const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : null;
 
   if (!token) {
-    console.log('Auth Hatası: Token bulunamadı');
     return res.status(401).json({ message: 'Yetkilendirme tokenı bulunamadı' });
   }
 
-  // Token'ı temizleyelim (boşluk vs. varsa)
-  token = token.trim();
+  const payload = verifyToken(token);
+  if (!payload) {
+    return res.status(401).json({ message: 'Geçersiz veya süresi dolmuş oturum' });
+  }
 
   try {
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-
-    if (error || !user) {
-      console.error('Supabase Auth Hatası:', error?.message);
-      return res.status(401).json({ message: 'Geçersiz oturum: ' + (error?.message || 'Kullanıcı bulunamadı') });
+    const user = await findUserById(payload.sub);
+    if (!user) {
+      return res.status(401).json({ message: 'Kullanıcı bulunamadı' });
     }
-
     (req as any).user = user;
     next();
   } catch (err: any) {
-    console.error('Middleware Try-Catch Hatası:', err.message);
-    return res.status(401).json({ message: 'Yetkilendirme hatası: ' + err.message });
+    console.error('[auth] kullanıcı okunamadı:', err.message);
+    return res.status(500).json({ message: 'Yetkilendirme sırasında hata oluştu' });
   }
 };
