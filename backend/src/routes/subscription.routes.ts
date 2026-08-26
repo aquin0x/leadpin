@@ -1,11 +1,9 @@
 import { Router } from 'express';
+import { asc, eq } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth';
-import { supabase } from '../utils/supabase';
-import {
-  getOrInitSubscription,
-  getStoredLeadCount,
-  redeemToken,
-} from '../services/subscription';
+import { db } from '../db/client';
+import { plans, businessesExpiringSoon } from '../db/schema';
+import { getOrInitSubscription, getStoredLeadCount, redeemToken } from '../services/subscription';
 
 const router = Router();
 
@@ -23,24 +21,23 @@ router.get('/status', async (req, res) => {
   }
 });
 
-// 7 gün içinde silinecek lead'ler (banner için)
+// 7 gün içinde otomatik temizliğe takılacak lead'ler (banner için)
 router.get('/expiring-leads', async (req, res) => {
   try {
-    const userId = (req as any).user.id;
-    const { data, error } = await supabase
-      .from('businesses_expiring_soon')
-      .select('id, name, created_at, expires_at')
-      .eq('user_id', userId)
-      .order('expires_at', { ascending: true })
+    const userId = (req as any).user.id as string;
+    const rows = await db
+      .select({
+        id: businessesExpiringSoon.id,
+        name: businessesExpiringSoon.name,
+        created_at: businessesExpiringSoon.created_at,
+        expires_at: businessesExpiringSoon.expires_at,
+      })
+      .from(businessesExpiringSoon)
+      .where(eq(businessesExpiringSoon.user_id, userId))
+      .orderBy(asc(businessesExpiringSoon.expires_at))
       .limit(100);
-    if (error) {
-      // View yoksa migration uygulanmamış — sessiz boş dön
-      if (/relation .* does not exist/i.test(error.message)) {
-        return res.json({ rows: [], total: 0 });
-      }
-      throw error;
-    }
-    res.json({ rows: data || [], total: (data || []).length });
+
+    res.json({ rows, total: rows.length });
   } catch (e: any) {
     res.status(500).json({ message: e.message });
   }
@@ -49,12 +46,8 @@ router.get('/expiring-leads', async (req, res) => {
 // Plan kataloğu (Plan sekmesinde göstermek için)
 router.get('/plans', async (_req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('plans')
-      .select('*')
-      .order('display_order', { ascending: true });
-    if (error) throw error;
-    res.json(data || []);
+    const rows = await db.select().from(plans).orderBy(asc(plans.display_order));
+    res.json(rows);
   } catch (e: any) {
     res.status(500).json({ message: e.message });
   }
