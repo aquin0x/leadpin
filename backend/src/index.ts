@@ -6,14 +6,17 @@ import fs from 'fs';
 import { getBusinesses, getBusiness, getStats, startScrape, getScrapeJob, getScrapeJobs, deleteScrapeJob, stopScrapeJob, logOutreach } from './controllers/business.controller';
 import { getLists, getListById, createList, addItemsToList, removeItemFromList, deleteList } from './controllers/list.controller';
 import { authMiddleware } from './middleware/auth';
-import { supabase } from './utils/supabase';
+import { and, desc, eq, count, sql } from 'drizzle-orm';
+import { db, closePool, seedPlans } from './db/client';
+import { businesses, lists, outreachLogs, userSettings } from './db/schema';
 import whatsappRoutes from './routes/whatsapp.routes';
 import userSettingsRoutes from './routes/user-settings.routes';
 import subscriptionRoutes from './routes/subscription.routes';
 import storageRoutes from './routes/storage.routes';
 import authRoutes from './routes/auth.routes';
-import { seedPlans } from './db/client';
 import { seedAdminUser } from './services/auth';
+import { MEDIA_DIR } from './services/media';
+import { startCleanupScheduler } from './services/cleanup';
 
 // Tauri prod modunda ENV_FILE_PATH env'i ile bundle'ın resource klasöründeki
 // backend.env'i geçer; dev modunda dosya backend/.env'den okunur.
@@ -81,27 +84,24 @@ app.get('/r/:shortId', async (req, res) => {
   let base: string | null = null;
 
   try {
-    const { data: biz } = await supabase
-      .from('businesses')
-      .select('id, user_id, short_id_clicks')
-      .eq('short_id', shortId)
-      .maybeSingle();
+    // Sayacı tek ifadede artır — okuma/yazma arası eşzamanlı tıklamalarda
+    // güncelleme kaybolmasın.
+    const [biz] = await db
+      .update(businesses)
+      .set({
+        short_id_clicks: sql`${businesses.short_id_clicks} + 1`,
+        short_id_last_click_at: new Date(),
+      })
+      .where(eq(businesses.short_id, shortId))
+      .returning({ id: businesses.id, user_id: businesses.user_id });
 
     if (biz) {
-      await supabase
-        .from('businesses')
-        .update({
-          short_id_clicks: (biz.short_id_clicks || 0) + 1,
-          short_id_last_click_at: new Date().toISOString(),
-        })
-        .eq('id', biz.id);
-
-      if (biz.user_id) {
-        const { data: settings } = await supabase
-          .from('user_settings')
-          .select('short_link_redirect_url')
-          .eq('user_id', biz.user_id)
-          .maybeSingle();
+      {
+        const [settings] = await db
+          .select({ short_link_redirect_url: userSettings.short_link_redirect_url })
+          .from(userSettings)
+          .where(eq(userSettings.user_id, biz.user_id!))
+          .limit(1);
         const userUrl = settings?.short_link_redirect_url?.trim();
         if (userUrl) base = userUrl;
       }
@@ -121,50 +121,37 @@ app.get('/api/outreach/whatsapp/grouped', authMiddleware, async (req, res) => {
   const userId = (req as any).user.id;
   const limit = Math.min(Number(req.query.limit) || 50, 200);
   try {
-    // Yakın geçmişten yeterli ham log çek (gruplama sonrası satır sayısı azalacak)
-    // Önce yeni kolonlarla dene; migration'ı henüz çalıştırmamış kullanıcılar için
-    // kolonlar yoksa eski şemayla retry et — log'lar yine de görünsün.
-    let data: any[] | null = null;
-    let error: any = null;
+    // Gömülü ilişki seçimleri (business:businesses(...), list:lists(...))
+    // LEFT JOIN'e çevrildi; aşağıdaki gruplama r.business.id / r.list.name
+    // okuduğu için iç içe şekil korunuyor.
+    //
+    // "migration uygulanmadıysa eski şemayla tekrar dene" yedeği kaldırıldı:
+    // batch_id ve list_id kolonlarını artık migration garanti ediyor.
+    const rows = await db
+      .select({
+        id: outreachLogs.id,
+        status: outreachLogs.status,
+        message_content: outreachLogs.message_content,
+        created_at: outreachLogs.created_at,
+        batch_id: outreachLogs.batch_id,
+        list_id: outreachLogs.list_id,
+        business: {
+          id: businesses.id,
+          name: businesses.name,
+          phone: businesses.phone,
+          short_id: businesses.short_id,
+          short_id_clicks: businesses.short_id_clicks,
+          short_id_last_click_at: businesses.short_id_last_click_at,
+        },
+        list: { id: lists.id, name: lists.name },
+      })
+      .from(outreachLogs)
+      .leftJoin(businesses, eq(outreachLogs.business_id, businesses.id))
+      .leftJoin(lists, eq(outreachLogs.list_id, lists.id))
+      .where(and(eq(outreachLogs.type, 'whatsapp'), eq(outreachLogs.user_id, userId)))
+      .orderBy(desc(outreachLogs.created_at))
+      .limit(500);
 
-    {
-      const r = await supabase
-        .from('outreach_logs')
-        .select(`
-          id, status, message_content, created_at, batch_id, list_id,
-          business:businesses(id, name, phone, short_id, short_id_clicks, short_id_last_click_at),
-          list:lists(id, name)
-        `)
-        .eq('type', 'whatsapp')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(500);
-      data = r.data as any[] | null;
-      error = r.error;
-    }
-
-    // Migration uygulanmadıysa kolon yok hatası — eski şemayla tekrar dene
-    if (error && /batch_id|list_id|column .* does not exist/i.test(error.message || '')) {
-      console.warn('[outreach/grouped] new columns missing, falling back:', error.message);
-      const r = await supabase
-        .from('outreach_logs')
-        .select(`
-          id, status, message_content, created_at,
-          business:businesses(id, name, phone, short_id, short_id_clicks, short_id_last_click_at)
-        `)
-        .eq('type', 'whatsapp')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(500);
-      data = r.data as any[] | null;
-      error = r.error;
-      // Eski şemada batch_id/list_id null kabul et
-      if (data) data = data.map((row: any) => ({ ...row, batch_id: null, list_id: null, list: null }));
-    }
-
-    if (error) return res.status(400).json({ message: error.message });
-
-    const rows: any[] = data || [];
     const grouped: any[] = [];
     const batchMap = new Map<string, any>();
 
@@ -238,18 +225,35 @@ app.get('/api/outreach/whatsapp', authMiddleware, async (req, res) => {
   const userId = (req as any).user.id;
   const { search, limit = 50, offset = 0 } = req.query;
   try {
-    let query = supabase
-      .from('outreach_logs')
-      .select('id, status, message_content, created_at, business:businesses(id, name, phone, short_id, short_id_clicks, short_id_last_click_at)', { count: 'exact' })
-      .eq('type', 'whatsapp')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .range(Number(offset), Number(offset) + Number(limit) - 1);
+    const where = and(eq(outreachLogs.type, 'whatsapp'), eq(outreachLogs.user_id, userId));
 
-    const { data, error, count } = await query;
-    if (error) return res.status(400).json({ message: error.message });
+    const [data, totalRows] = await Promise.all([
+      db
+        .select({
+          id: outreachLogs.id,
+          status: outreachLogs.status,
+          message_content: outreachLogs.message_content,
+          created_at: outreachLogs.created_at,
+          business: {
+            id: businesses.id,
+            name: businesses.name,
+            phone: businesses.phone,
+            short_id: businesses.short_id,
+            short_id_clicks: businesses.short_id_clicks,
+            short_id_last_click_at: businesses.short_id_last_click_at,
+          },
+        })
+        .from(outreachLogs)
+        .leftJoin(businesses, eq(outreachLogs.business_id, businesses.id))
+        .where(where)
+        .orderBy(desc(outreachLogs.created_at))
+        .limit(Number(limit))
+        .offset(Number(offset)),
+      db.select({ value: count() }).from(outreachLogs).where(where),
+    ]);
 
-    let rows = data || [];
+    const total = totalRows[0]?.value ?? 0;
+    let rows: any[] = data;
     if (search) {
       const q = String(search).toLowerCase();
       rows = rows.filter((r: any) => {
@@ -263,7 +267,7 @@ app.get('/api/outreach/whatsapp', authMiddleware, async (req, res) => {
       });
     }
 
-    return res.json({ rows, total: count });
+    return res.json({ rows, total });
   } catch (e: any) {
     return res.status(500).json({ message: e.message });
   }
@@ -308,41 +312,6 @@ app.post('/api/lists/:listId/items', authMiddleware, addItemsToList);
 app.delete('/api/lists/:listId/items/:businessId', authMiddleware, removeItemFromList);
 app.delete('/api/lists/:id', authMiddleware, deleteList);
 
-// SSE for Scrape Status Updates (EventSource always uses GET)
-app.get('/api/scrape/:id/stream', authMiddleware, (req, res) => {
-  const { id } = req.params;
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Content-Encoding', 'none'); 
-  res.flushHeaders();
-
-  console.log(`SSE Client connected for job: ${id}`);
-
-  // Listen for real-time changes in Supabase for this specific job
-  const subscription = supabase
-    .channel(`job-status-${id}`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'scrape_jobs',
-        filter: `id=eq.${id}`
-      },
-      (payload) => {
-        res.write(`data: ${JSON.stringify(payload.new)}\n\n`);
-      }
-    )
-    .subscribe();
-
-  req.on('close', () => {
-    console.log(`SSE Client disconnected for job: ${id}`);
-    supabase.removeChannel(subscription);
-  });
-});
-
 // ─────────────────────────────────────────────────────────────────────────────
 // SPA servisi (sunucu dağıtımı)
 //
@@ -350,6 +319,9 @@ app.get('/api/scrape/:id/stream', authMiddleware, (req, res) => {
 // aynı origin'de olurlar ve CORS devreye girmez. Masaüstü (Tauri sidecar) modunda
 // PUBLIC_DIR tanımlı olmaz — SPA'yı webview kendi yükler, bu blok atlanır.
 // ─────────────────────────────────────────────────────────────────────────────
+// Yüklenen medya — Supabase Storage bucket'ının yerine kalıcı diskten servis.
+app.use('/media', express.static(MEDIA_DIR, { maxAge: '7d', index: false }));
+
 const publicDir = process.env.PUBLIC_DIR;
 
 if (publicDir && fs.existsSync(publicDir)) {
@@ -360,7 +332,7 @@ if (publicDir && fs.existsSync(publicDir)) {
   //
   // Express 5 path-to-regexp v8 kullanıyor; Express 4'teki app.get('*') kalıbı
   // burada hata fırlatır. Bu yüzden RegExp ile yazılmıştır.
-  app.get(/^\/(?!api\/|health(?:\/|$)|r\/).*/, (_req, res) => {
+  app.get(/^\/(?!api\/|health(?:\/|$)|r\/|media\/).*/, (_req, res) => {
     res.sendFile(indexHtml);
   });
 
@@ -386,11 +358,13 @@ const server = app.listen(Number(port), '0.0.0.0', () => {
   seedPlans()
     .then(() => seedAdminUser())
     .then(() => {
+      // pg_cron yerine — 60 günden eski kullanılmamış lead ve log temizliği.
+      startCleanupScheduler();
       return import('./services/whatsapp').then(({ bootstrapLines }) =>
         bootstrapLines().catch((e) => console.error('WA bootstrap failed:', e?.message)),
       );
     })
-    .catch((e) => console.error('[boot] açılış hazırlığı başarısız:', e?.message));
+    .catch((e: any) => console.error('[boot] açılış hazırlığı başarısız:', e?.message));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -422,6 +396,12 @@ async function shutdown(signal: string) {
     await shutdownAll();
   } catch (e: any) {
     console.error('WhatsApp kapanışı başarısız:', e?.message);
+  }
+
+  try {
+    await closePool();
+  } catch (e: any) {
+    console.error('Veritabanı havuzu kapatılamadı:', e?.message);
   }
 
   clearTimeout(forceExit);

@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import net from 'net';
-import { supabase } from '../utils/supabase';
+import { eq } from 'drizzle-orm';
+import { db } from '../db/client';
+import { userSettings } from '../db/schema';
 import { restartLinesForUser } from '../services/whatsapp';
 
 function userId(req: Request): string {
@@ -27,13 +29,16 @@ const EMPTY = (uid: string): SettingsRow => ({
 
 export const getUserSettings = async (req: Request, res: Response) => {
   const uid = userId(req);
-  const { data, error } = await supabase
-    .from('user_settings')
-    .select('*')
-    .eq('user_id', uid)
-    .maybeSingle();
-  if (error) return res.status(400).json({ message: error.message });
-  return res.json(data ?? EMPTY(uid));
+  try {
+    const [row] = await db
+      .select()
+      .from(userSettings)
+      .where(eq(userSettings.user_id, uid))
+      .limit(1);
+    return res.json(row ?? EMPTY(uid));
+  } catch (error: any) {
+    return res.status(400).json({ message: error.message });
+  }
 };
 
 export const updateUserSettings = async (req: Request, res: Response) => {
@@ -61,18 +66,30 @@ export const updateUserSettings = async (req: Request, res: Response) => {
   };
 
   // Önceki proxy değerlerini al — değişmiş mi kontrol için
-  const { data: prev } = await supabase
-    .from('user_settings')
-    .select('whatsapp_proxy_host, whatsapp_proxy_port, whatsapp_proxy_type')
-    .eq('user_id', uid)
-    .maybeSingle();
+  const [prev] = await db
+    .select({
+      whatsapp_proxy_host: userSettings.whatsapp_proxy_host,
+      whatsapp_proxy_port: userSettings.whatsapp_proxy_port,
+      whatsapp_proxy_type: userSettings.whatsapp_proxy_type,
+    })
+    .from(userSettings)
+    .where(eq(userSettings.user_id, uid))
+    .limit(1);
 
-  const { data, error } = await supabase
-    .from('user_settings')
-    .upsert({ user_id: uid, ...patch, updated_at: new Date().toISOString() })
-    .select('*')
-    .single();
-  if (error) return res.status(400).json({ message: error.message });
+  let data;
+  try {
+    const now = new Date();
+    [data] = await db
+      .insert(userSettings)
+      .values({ user_id: uid, ...patch, updated_at: now })
+      .onConflictDoUpdate({
+        target: userSettings.user_id,
+        set: { ...patch, updated_at: now },
+      })
+      .returning();
+  } catch (error: any) {
+    return res.status(400).json({ message: error.message });
+  }
 
   const proxyChanged =
     (prev?.whatsapp_proxy_host ?? null) !== patch.whatsapp_proxy_host ||

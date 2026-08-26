@@ -15,7 +15,9 @@ import {
   assertCanSendMessages,
   incrementMessages,
 } from '../services/subscription';
-import { supabase } from '../utils/supabase';
+import { and, eq, count } from 'drizzle-orm';
+import { db } from '../db/client';
+import { listItems, lists } from '../db/schema';
 
 function userId(req: Request): string {
   return (req as any).user.id;
@@ -83,18 +85,30 @@ export const startWhatsAppCampaign = async (req: Request, res: Response) => {
 
     // Plan limiti: liste boyutu kadar mesaj kotası lazım
     const user = (req as any).user;
-    const { count: listSize } = await supabase
-      .from('list_items')
-      .select('*', { count: 'exact', head: true })
-      .eq('list_id', listId);
+    // Liste sahipliğini doğrula — aksi halde başkasının listesine kampanya
+    // başlatılabilirdi.
+    const [ownedList] = await db
+      .select({ id: lists.id })
+      .from(lists)
+      .where(and(eq(lists.id, String(listId)), eq(lists.user_id, uid)))
+      .limit(1);
+    if (!ownedList) {
+      return res.status(404).json({ message: 'Liste bulunamadı' });
+    }
+
+    const [sizeRow] = await db
+      .select({ value: count() })
+      .from(listItems)
+      .where(eq(listItems.list_id, String(listId)));
+    const listSize = sizeRow?.value ?? 0;
     try {
-      await assertCanSendMessages(user, listSize || 0);
+      await assertCanSendMessages(user, listSize);
     } catch (e: any) {
       return res.status(e.statusCode || 500).json({ message: e.message, code: e.code });
     }
     // Optimist sayım — kampanya başladıysa kotaya dahil et. Skipped olanları
     // geri ödeme yapmıyoruz (basitlik için; kullanıcı için biraz konservatif).
-    await incrementMessages(uid, listSize || 0);
+    await incrementMessages(uid, listSize);
 
     const campaign = await startCampaign({
       userId: uid,
