@@ -40,24 +40,25 @@ export const createLine = async (req: Request, res: Response) => {
 
 export const getLine = async (req: Request, res: Response) => {
   const uid = userId(req);
-  const line = getLineStatus(uid, req.params.id);
+  const line = getLineStatus(uid, String(req.params.id));
   if (!line) return res.status(404).json({ message: 'Hat bulunamadı' });
   return res.json(line);
 };
 
 export const deleteLine = async (req: Request, res: Response) => {
   const uid = userId(req);
-  const ok = await removeLine(uid, req.params.id);
+  const ok = await removeLine(uid, String(req.params.id));
   if (!ok) return res.status(404).json({ message: 'Hat bulunamadı' });
   return res.json({ message: 'Hat silindi' });
 };
 
 export const reconnectLine = async (req: Request, res: Response) => {
   const uid = userId(req);
-  const ok = await logoutLine(uid, req.params.id);
+  const lineId = String(req.params.id);
+  const ok = await logoutLine(uid, lineId);
   if (!ok) return res.status(404).json({ message: 'Hat bulunamadı' });
   // Yeniden initialize et ki yeni QR çıksın
-  const session = await initLine(uid, req.params.id);
+  const session = await initLine(uid, lineId);
   return res.json({ status: session?.status ?? 'disconnected' });
 };
 

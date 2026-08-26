@@ -1,0 +1,7 @@
+# Kabuk betikleri ve Docker dosyaları Linux container'da çalışır; CRLF satır sonu
+# shebang'i bozar ve "exec format error" / "no such file or directory" verir.
+# Windows'ta geliştirilse bile bunlar her zaman LF ile kaydedilmeli.
+*.sh text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+docker-entrypoint.sh text eol=lf

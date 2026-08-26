@@ -382,9 +382,9 @@ drop policy if exists "businesses_insert_own" on public.businesses;
 drop policy if exists "businesses_update_own" on public.businesses;
 drop policy if exists "businesses_delete_own" on public.businesses;
 create policy "businesses_select_own" on public.businesses for select to authenticated
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 create policy "businesses_insert_own" on public.businesses for insert to authenticated
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 create policy "businesses_update_own" on public.businesses for update to authenticated
   using (auth.uid() = user_id);
 create policy "businesses_delete_own" on public.businesses for delete to authenticated

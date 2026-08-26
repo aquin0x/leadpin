@@ -73,7 +73,56 @@ const LINES_FILE = path.join(SESSION_ROOT, '_lines.json');
 // Keyed by lineId (UUID)
 const sessions = new Map<string, Session>();
 // One campaign per user
-const campaigns = new Map<string, CampaignState & { stopRequested?: boolean }>();
+type RunningCampaign = CampaignState & { stopRequested?: boolean; refunded?: boolean };
+const campaigns = new Map<string, RunningCampaign>();
+
+/**
+ * Kampanya başında liste boyutu kadar kota PEŞİN düşülüyor
+ * (whatsapp.controller.ts). Gönderilmeyen mesajların kotasını geri öder:
+ * skipped (geçersiz numara / WhatsApp hesabı yok) + hiç işlenmemiş olanlar.
+ *
+ * Hem normal bitişten hem de kapanış handler'ından çağrılır; `refunded`
+ * bayrağı ikisinin birden çalışıp kotayı iki kez iade etmesini engeller.
+ */
+async function refundRemaining(userId: string, campaign: RunningCampaign): Promise<void> {
+  if (campaign.refunded) return;
+  campaign.refunded = true;
+  try {
+    const { refundMessages } = await import('./subscription');
+    const unprocessed = Math.max(0, campaign.total - campaign.processed);
+    const refundCount = campaign.skipped + unprocessed;
+    if (refundCount > 0) {
+      await refundMessages(userId, refundCount);
+      console.log(
+        `[WA:${userId}] mesaj kotası iade: ${refundCount} (skipped=${campaign.skipped}, unprocessed=${unprocessed})`
+      );
+    }
+  } catch (e: any) {
+    campaign.refunded = false; // başarısız olduysa tekrar denenebilsin
+    console.warn(`[WA:${userId}] refund failed:`, e.message);
+  }
+}
+
+/**
+ * Süreç kapanırken çağrılır: çalışan kampanyanın kotasını iade eder ve tüm
+ * Chromium süreçlerini temiz kapatır (SingletonLock artığı kalmasın).
+ */
+export async function shutdownAll(): Promise<void> {
+  for (const [userId, campaign] of campaigns) {
+    if (campaign.status !== 'running') continue;
+    campaign.stopRequested = true;
+    campaign.status = 'stopped';
+    campaign.finishedAt = Date.now();
+    await refundRemaining(userId, campaign);
+  }
+
+  const results = await Promise.allSettled(
+    Array.from(sessions.values()).map((s) => s.client.destroy())
+  );
+  const failed = results.filter((r) => r.status === 'rejected').length;
+  console.log(`[WA] ${sessions.size} oturum kapatıldı${failed ? ` (${failed} hata)` : ''}`);
+  sessions.clear();
+}
 
 function ensureRoot() {
   try { fs.mkdirSync(SESSION_ROOT, { recursive: true }); } catch {}
@@ -166,6 +215,10 @@ async function createClient(lineId: string, userId: string): Promise<Client> {
     authStrategy: new LocalAuth({ clientId: lineId, dataPath: SESSION_ROOT }),
     puppeteer: {
       headless: true,
+      // Container'da Chrome imaja ayrıca kurulduğu için yolu env'den alınır.
+      // Scraper zaten bunu okuyor (scraper.ts); burada eksikti — Linux'ta
+      // whatsapp-web.js bundled Chromium'u bulamadığı için hat açılmıyordu.
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: await buildPuppeteerArgs(userId),
     },
   });
@@ -636,7 +689,7 @@ export async function startCampaign(params: StartCampaignParams): Promise<Campai
 
   const batchId = crypto.randomUUID();
 
-  const campaign: CampaignState & { stopRequested?: boolean } = {
+  const campaign: RunningCampaign = {
     id: `${listId}-${Date.now()}`,
     userId,
     listId,
@@ -734,20 +787,7 @@ export async function startCampaign(params: StartCampaignParams): Promise<Campai
     campaign.finishedAt = Date.now();
     campaign.currentLead = undefined;
 
-    // Optimist sayım: kampanya başında listSize kadar kotayı düşmüştük.
-    // Skipped (geçersiz numara, WhatsApp hesabı yok) + işlenmemiş (stop edildi)
-    // mesajlar için kotayı geri ödeyelim.
-    try {
-      const { refundMessages } = await import('./subscription');
-      const unprocessed = Math.max(0, campaign.total - campaign.processed);
-      const refundCount = campaign.skipped + unprocessed;
-      if (refundCount > 0) {
-        await refundMessages(userId, refundCount);
-        console.log(`[WA:${userId}] mesaj kotası iade: ${refundCount} (skipped=${campaign.skipped}, unprocessed=${unprocessed})`);
-      }
-    } catch (e: any) {
-      console.warn(`[WA:${userId}] refund failed:`, e.message);
-    }
+    await refundRemaining(userId, campaign);
 
     console.log(`[WA:${userId}] campaign done:`, campaign);
   })().catch((err) => {

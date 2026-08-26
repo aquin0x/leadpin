@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
 import { getBusinesses, getBusiness, getStats, startScrape, getScrapeJob, getScrapeJobs, deleteScrapeJob, stopScrapeJob, logOutreach } from './controllers/business.controller';
 import { getLists, getListById, createList, addItemsToList, removeItemFromList, deleteList } from './controllers/list.controller';
 import { authMiddleware } from './middleware/auth';
@@ -21,20 +23,40 @@ if (process.env.ENV_FILE_PATH) {
 const app = express();
 const port = process.env.PORT || 4000;
 
-// Desktop (Tauri) için izinli origin'ler
-const allowedOrigins = [
+// Masaüstü (Tauri) origin'leri her zaman izinli — Tauri 2 webview Windows'ta
+// http://tauri.localhost, macOS'ta tauri://localhost, Linux'ta http://tauri.localhost
+// kullanır. Sunucu dağıtımında ALLOWED_ORIGINS ile ek origin tanımlanır.
+//
+// Not: tek container dağıtımında panel ve API aynı origin'de olduğu için tarayıcı
+// zaten CORS ön kontrolü yapmaz; bu liste masaüstü modu ve olası ayrı-origin
+// kurulumları içindir.
+const defaultOrigins = [
   'tauri://localhost',
   'https://tauri.localhost',
+  'http://tauri.localhost',
   'http://localhost:5173',
   'http://127.0.0.1:5173',
 ];
 
+const allowedOrigins = [
+  ...defaultOrigins,
+  ...(process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim().replace(/\/$/, ''))
+    .filter(Boolean),
+];
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (
+      !origin ||
+      allowedOrigins.includes(origin.replace(/\/$/, '')) ||
+      /^https?:\/\/tauri\.localhost(:\d+)?$/.test(origin) ||
+      /^tauri:\/\/localhost(:\d+)?$/.test(origin)
+    ) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error(`Not allowed by CORS: ${origin}`));
     }
   },
   credentials: true,
@@ -44,15 +66,6 @@ app.use(cors({
 
 app.use(express.json({ limit: '25mb' }));
 
-// Global error handler
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error('Unhandled Error:', err);
-  res.status(err.status || 500).json({
-    message: err.message || 'Bir iç sunucu hatası oluştu',
-    error: process.env.NODE_ENV === 'development' ? err : {}
-  });
-});
-
 // Public health check
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
@@ -60,10 +73,14 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 // Target URL comes from SHORT_LINK_REDIRECT_URL env (shortId appended as ?lead=).
 app.get('/r/:shortId', async (req, res) => {
   const { shortId } = req.params;
+  // Hedef URL önceliği: işletme sahibinin kendi ayarı > global env > varsayılan.
+  // Tıklama sayacı hedef bulunamasa bile artar; yönlendirme her hâlükârda yapılır.
+  let base: string | null = null;
+
   try {
     const { data: biz } = await supabase
       .from('businesses')
-      .select('id, short_id_clicks')
+      .select('id, user_id, short_id_clicks')
       .eq('short_id', shortId)
       .maybeSingle();
 
@@ -75,12 +92,22 @@ app.get('/r/:shortId', async (req, res) => {
           short_id_last_click_at: new Date().toISOString(),
         })
         .eq('id', biz.id);
+
+      if (biz.user_id) {
+        const { data: settings } = await supabase
+          .from('user_settings')
+          .select('short_link_redirect_url')
+          .eq('user_id', biz.user_id)
+          .maybeSingle();
+        const userUrl = settings?.short_link_redirect_url?.trim();
+        if (userUrl) base = userUrl;
+      }
     }
   } catch (e) {
     console.error('short-link click log failed:', e);
   }
 
-  const base = process.env.SHORT_LINK_REDIRECT_URL || 'https://ugra.io';
+  base = base || process.env.SHORT_LINK_REDIRECT_URL || 'https://ugra.io';
   const sep = base.includes('?') ? '&' : '?';
   return res.redirect(302, `${base}${sep}lead=${encodeURIComponent(shortId)}`);
 });
@@ -310,9 +337,83 @@ app.get('/api/scrape/:id/stream', authMiddleware, (req, res) => {
   });
 });
 
-app.listen(Number(port), '0.0.0.0', () => {
+// ─────────────────────────────────────────────────────────────────────────────
+// SPA servisi (sunucu dağıtımı)
+//
+// Tek container dağıtımında panel ve API aynı süreçten servis edilir; bu sayede
+// aynı origin'de olurlar ve CORS devreye girmez. Masaüstü (Tauri sidecar) modunda
+// PUBLIC_DIR tanımlı olmaz — SPA'yı webview kendi yükler, bu blok atlanır.
+// ─────────────────────────────────────────────────────────────────────────────
+const publicDir = process.env.PUBLIC_DIR;
+
+if (publicDir && fs.existsSync(publicDir)) {
+  const indexHtml = path.join(publicDir, 'index.html');
+  app.use(express.static(publicDir));
+
+  // React Router fallback: API / health / short-link dışındaki her GET index.html'e.
+  //
+  // Express 5 path-to-regexp v8 kullanıyor; Express 4'teki app.get('*') kalıbı
+  // burada hata fırlatır. Bu yüzden RegExp ile yazılmıştır.
+  app.get(/^\/(?!api\/|health(?:\/|$)|r\/).*/, (_req, res) => {
+    res.sendFile(indexHtml);
+  });
+
+  console.log(`📦 SPA servisi aktif: ${publicDir}`);
+} else {
+  console.log('📦 PUBLIC_DIR tanımlı değil — SPA servisi kapalı (masaüstü sidecar modu)');
+}
+
+// Global error handler — TÜM route'lardan sonra gelmeli, aksi halde hiç tetiklenmez.
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('Unhandled Error:', err);
+  res.status(err.status || 500).json({
+    message: err.message || 'Bir iç sunucu hatası oluştu',
+    error: process.env.NODE_ENV === 'development' ? err : {}
+  });
+});
+
+const server = app.listen(Number(port), '0.0.0.0', () => {
   console.log(`🚀 LeadPin API runs on port ${port}`);
   import('./services/whatsapp').then(({ bootstrapLines }) => {
     bootstrapLines().catch((e) => console.error('WA bootstrap failed:', e?.message));
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Graceful shutdown
+//
+// Coolify her deploy'da SIGTERM gönderir. Kampanya kotası kampanya BAŞLARKEN
+// peşin düşüldüğü için (whatsapp.controller.ts), süreç iade yapmadan ölürse
+// kullanıcı kotayı kaybeder. Masaüstünde nadir; sunucuda her deploy'da olur.
+// ─────────────────────────────────────────────────────────────────────────────
+const SHUTDOWN_TIMEOUT_MS = 15_000;
+let shuttingDown = false;
+
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n${signal} alındı — kapanış başlıyor...`);
+
+  // Süre aşılırsa zorla çık; Coolify'ın SIGKILL'inden önce bitmeli.
+  const forceExit = setTimeout(() => {
+    console.error('Kapanış zaman aşımına uğradı, zorla çıkılıyor.');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  forceExit.unref();
+
+  server.close();
+
+  try {
+    const { shutdownAll } = await import('./services/whatsapp');
+    await shutdownAll();
+  } catch (e: any) {
+    console.error('WhatsApp kapanışı başarısız:', e?.message);
+  }
+
+  clearTimeout(forceExit);
+  console.log('Kapanış tamamlandı.');
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));

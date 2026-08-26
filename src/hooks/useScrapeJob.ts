@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { supabase } from "@/lib/supabase"
+import { API_URL } from "@/lib/api-client"
 import type { ScrapeJob } from "@/types"
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000"
 
 export function useScrapeJob(jobId: string | null) {
   const [job, setJob] = useState<ScrapeJob | null>(null)

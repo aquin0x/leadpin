@@ -1,0 +1,44 @@
+# Bağımlılıklar — imajda temiz kurulur
+node_modules
+backend/node_modules
+
+# Build çıktıları — imajda yeniden üretilir
+dist
+backend/dist
+backend/build
+
+# Masaüstü (Tauri) — sunucu imajıyla ilgisi yok, Rust target'ı devasa
+src-tauri/target
+src-tauri/gen
+src-tauri/binaries
+src-tauri/WixTools
+
+# Yerel çalışma zamanı verisi — sunucuda /data volume'ünden gelir.
+# İmaja girerse geliştirme makinesinin WhatsApp oturumu sunucuya taşınmış olur.
+backend/.wwebjs_auth
+backend/.wwebjs_cache
+backend/.cache
+
+# Gizli bilgiler — sunucuda Coolify env'inden gelir.
+# (Vite'ta process.env zaten .env'i ezer, ama anahtarlar imaj katmanlarında durmasın.)
+.env
+.env.*
+backend/.env
+backend/.env.*
+
+# Geliştirme ortamı
+.git
+.github
+.vscode
+.idea
+.claude
+docs
+
+# Günlükler ve artıklar
+*.log
+npm-debug.log*
+coverage
+.nyc_output
+*.tsbuildinfo
+.DS_Store
+Thumbs.db

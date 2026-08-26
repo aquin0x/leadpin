@@ -1,7 +1,11 @@
 import { supabase } from "@/lib/supabase"
 import type { BusinessFilters, PaginatedBusinesses, Business, ScrapeJob } from "@/types"
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000"
+// Sunucu dağıtımında "/" (panel ve API aynı origin), masaüstünde
+// "http://127.0.0.1:4000" (Tauri sidecar). Sondaki "/" burada bir kez kırpılır;
+// aksi halde "/" + "/api/..." birleşince "//api/..." olur ve tarayıcı bunu
+// protocol-relative URL sayıp başka bir host'a istek atar.
+const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:4000").replace(/\/$/, "")
 
 class ApiError extends Error {
   status: number
@@ -28,7 +32,7 @@ async function getAuthHeaders(): Promise<HeadersInit> {
 
 async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const headers = await getAuthHeaders()
-  const url = `${API_URL.replace(/\/$/, "")}${endpoint}`
+  const url = `${API_URL}${endpoint}`
 
   const response = await fetch(url, {
     ...options,
@@ -221,7 +225,7 @@ export async function sendWhatsAppSingle(body: {
   media?: WhatsAppMedia
 }): Promise<SendSingleResult> {
   const headers = await getAuthHeaders()
-  const res = await fetch(`${API_URL.replace(/\/$/, "")}/api/whatsapp/send-single`, {
+  const res = await fetch(`${API_URL}/api/whatsapp/send-single`, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -612,7 +616,7 @@ export async function uploadMediaFile(file: File): Promise<UploadedMedia> {
 
 export async function deleteUploadedMedia(path: string): Promise<{ ok: boolean }> {
   const headers = await getAuthHeaders()
-  const r = await fetch(`${API_URL.replace(/\/$/, "")}/api/storage/media`, {
+  const r = await fetch(`${API_URL}/api/storage/media`, {
     method: "DELETE",
     headers,
     body: JSON.stringify({ path }),
