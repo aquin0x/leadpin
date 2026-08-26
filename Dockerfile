@@ -21,6 +21,9 @@ COPY . .
 # Coolify tarafında bunlar "Build Variable" olarak işaretlenmiş olmalı.
 # process.env'deki VITE_* değerleri .env dosyalarını ezer, dolayısıyla bu arg'lar
 # repodaki herhangi bir .env'den önceliklidir.
+# Not: docker build burada "SecretsUsedInArgOrEnv" uyarısı verir. Anon key bir sır
+# DEĞİL — tanımı gereği tarayıcıya gönderilir ve RLS ile korunur. Servis rolü
+# anahtarı ise buraya asla girmez; o yalnızca runtime env'inde durur.
 ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_ANON_KEY
 ARG VITE_API_URL=/
@@ -94,29 +97,39 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tini \
     && rm -rf /var/lib/apt/lists/*
 
+# Entrypoint root olarak kurulur. İsim bilerek "leadpin-" önekli: temel node
+# imajının kendi /usr/local/bin/docker-entrypoint.sh dosyası var, aynı adı
+# kullanmak onu sessizce ezer.
+COPY docker-entrypoint.sh /usr/local/bin/leadpin-entrypoint.sh
+RUN chmod +x /usr/local/bin/leadpin-entrypoint.sh
+
+# Dizinler BOŞKEN sahiplenilir, sonra node kullanıcısına geçilir. Böylece Chrome
+# ve node_modules zaten doğru sahiplikle oluşur.
+#
+# Bunun yerine en sonda `chown -R` yapmak imaja 556 MB'lık fazladan bir katman
+# ekliyordu: recursive chown her dosyanın metadata'sını değiştirdiği için Docker
+# hepsini yeni katmana kopyalar.
+RUN mkdir -p /app/backend /app/public /data /opt/puppeteer \
+ && chown -R node:node /app /data /opt/puppeteer
+
+USER node
 WORKDIR /app/backend
 
-COPY backend/package.json backend/package-lock.json ./
+COPY --chown=node:node backend/package.json backend/package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 # Chrome'u puppeteer'ın kendisi indirir — sürüm-eşli gelir. Debian'ın `chromium`
 # paketi kullanılmıyor: whatsapp-web.js sürüm uyumu konusunda seçici.
 RUN npx puppeteer browsers install chrome
 
-COPY --from=backend-build /app/backend/dist ./dist
-COPY --from=frontend-build /app/dist /app/public
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY --chown=node:node --from=backend-build /app/backend/dist ./dist
+COPY --chown=node:node --from=frontend-build /app/dist /app/public
 
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
- && mkdir -p /data \
- && chown -R node:node /data /opt/puppeteer /app
-
-USER node
 WORKDIR /app
 EXPOSE 4000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/leadpin-entrypoint.sh"]
 CMD ["node", "backend/dist/index.js"]
