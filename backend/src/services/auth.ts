@@ -82,7 +82,7 @@ export function verifyToken(token: string): { sub: string; email: string } | nul
 export async function findUserById(id: string): Promise<AuthUser | null> {
   const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
   if (!row) return null;
-  return { id: row.id, email: row.email, isAdmin: row.isAdmin, linkOwner: row.linkOwner };
+  return { id: row.id, email: row.email, isAdmin: row.is_admin, linkOwner: row.link_owner };
 }
 
 export async function findUserByEmail(email: string) {
@@ -107,9 +107,9 @@ export async function seedAdminUser(): Promise<void> {
 
   await db.insert(users).values({
     email,
-    passwordHash: await hashPassword(password),
-    isAdmin: true,
-    linkOwner: true,
+    password_hash: await hashPassword(password),
+    is_admin: true,
+    link_owner: true,
   });
   console.log(`[auth] ilk admin kullanıcı oluşturuldu: ${email}`);
 }

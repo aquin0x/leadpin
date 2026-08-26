@@ -48,14 +48,14 @@ export const signup = async (req: Request, res: Response) => {
 
   const [row] = await db
     .insert(users)
-    .values({ email, passwordHash: await hashPassword(password) })
+    .values({ email, password_hash: await hashPassword(password) })
     .returning();
 
   const user: AuthUser = {
     id: row.id,
     email: row.email,
-    isAdmin: row.isAdmin,
-    linkOwner: row.linkOwner,
+    isAdmin: row.is_admin,
+    linkOwner: row.link_owner,
   };
   return res.status(201).json({ token: issueToken(user), user: publicUser(user) });
 };
@@ -70,7 +70,7 @@ export const login = async (req: Request, res: Response) => {
   // cevap süresi "kayıtlı e-posta" ile "kayıtsız e-posta" arasında ölçülebilir
   // fark yaratır ve hangi adreslerin kayıtlı olduğu sızar.
   const dummyHash = `${'0'.repeat(32)}:${'0'.repeat(KEYLEN_HEX)}`;
-  const ok = await verifyPassword(password, row ? row.passwordHash : dummyHash);
+  const ok = await verifyPassword(password, row ? row.password_hash : dummyHash);
 
   if (!row || !ok) {
     return res.status(401).json({ message: 'E-posta veya şifre hatalı' });
@@ -79,8 +79,8 @@ export const login = async (req: Request, res: Response) => {
   const user: AuthUser = {
     id: row.id,
     email: row.email,
-    isAdmin: row.isAdmin,
-    linkOwner: row.linkOwner,
+    isAdmin: row.is_admin,
+    linkOwner: row.link_owner,
   };
   return res.json({ token: issueToken(user), user: publicUser(user) });
 };
@@ -98,13 +98,13 @@ export const changePassword = async (req: Request, res: Response) => {
   }
 
   const row = await findUserByEmail(current.email);
-  if (!row || !(await verifyPassword(String(currentPassword || ''), row.passwordHash))) {
+  if (!row || !(await verifyPassword(String(currentPassword || ''), row.password_hash))) {
     return res.status(401).json({ message: 'Mevcut şifre hatalı' });
   }
 
   await db
     .update(users)
-    .set({ passwordHash: await hashPassword(String(newPassword)), updatedAt: new Date() })
+    .set({ password_hash: await hashPassword(String(newPassword)), updated_at: new Date() })
     .where(eq(users.id, current.id));
 
   return res.json({ ok: true });
@@ -120,14 +120,14 @@ export const changeEmail = async (req: Request, res: Response) => {
   }
 
   const row = await findUserByEmail(current.email);
-  if (!row || !(await verifyPassword(String(currentPassword || ''), row.passwordHash))) {
+  if (!row || !(await verifyPassword(String(currentPassword || ''), row.password_hash))) {
     return res.status(401).json({ message: 'Mevcut şifre hatalı' });
   }
   if (email !== current.email && (await findUserByEmail(email))) {
     return res.status(409).json({ message: 'Bu e-posta zaten kayıtlı' });
   }
 
-  await db.update(users).set({ email, updatedAt: new Date() }).where(eq(users.id, current.id));
+  await db.update(users).set({ email, updated_at: new Date() }).where(eq(users.id, current.id));
 
   // Jeton payload'ında e-posta var; değiştiği için yenisi verilir.
   const user: AuthUser = { ...current, email };

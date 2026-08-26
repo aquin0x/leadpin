@@ -10,8 +10,11 @@
  *   - pg_cron job'ları             → services/cleanup.ts
  *   - track_short_id_click() RPC   → silindi (kodda hiç çağrılmıyordu)
  *
- * Kolon adları snake_case kalır (mevcut veriyle ve API şekliyle uyum için),
- * TypeScript tarafında camelCase kullanılır.
+ * Kural: TypeScript anahtarı = kolon adı (snake_case). Drizzle sorgu sonucunda
+ * şemadaki TS anahtarını döndürdüğü için, bu sayede API yanıtlarının şekli
+ * Supabase dönemiyle birebir aynı kalır ve frontend'de tek satır değişmez.
+ * camelCase kullanılsaydı reviews_count / created_at gibi alanlar sessizce
+ * undefined olurdu — uçtan uca tip kontrolü olmadığı için derleme de yakalamazdı.
  */
 import {
   pgTable,
@@ -36,15 +39,15 @@ import { sql } from 'drizzle-orm';
 // ============================================================================
 
 export const users = pgTable('users', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  email: text('email').notNull().unique(),
+  id: uuid().primaryKey().defaultRandom(),
+  email: text().notNull().unique(),
   // scrypt: "<saltHex>:<hashHex>"
-  passwordHash: text('password_hash').notNull(),
+  password_hash: text().notNull(),
   // Eskiden auth.users.raw_app_meta_data içinde JSON'du, artık normal kolon.
-  isAdmin: boolean('is_admin').notNull().default(false),
-  linkOwner: boolean('link_owner').notNull().default(false),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  is_admin: boolean().notNull().default(false),
+  link_owner: boolean().notNull().default(false),
+  created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
 // ============================================================================
@@ -54,34 +57,34 @@ export const users = pgTable('users', {
 export const businesses = pgTable(
   'businesses',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
-    name: text('name').notNull().default(''),
-    category: text('category'),
-    city: text('city'),
-    district: text('district'),
-    neighborhood: text('neighborhood'),
-    address: text('address'),
-    phone: text('phone'),
-    website: text('website'),
-    rating: numeric('rating', { precision: 3, scale: 2 }),
-    reviewsCount: integer('reviews_count').default(0),
-    googleMapsUrl: text('google_maps_url').unique(),
-    shortId: text('short_id').unique(),
-    shortIdClicks: integer('short_id_clicks').notNull().default(0),
-    shortIdLastClickAt: timestamp('short_id_last_click_at', { withTimezone: true }),
-    email: text('email'),
-    instagram: text('instagram'),
-    facebook: text('facebook'),
-    source: text('source').notNull().default('scrape'),
-    status: text('status').default('new'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    id: uuid().primaryKey().defaultRandom(),
+    user_id: uuid().references(() => users.id, { onDelete: 'cascade' }),
+    name: text().notNull().default(''),
+    category: text(),
+    city: text(),
+    district: text(),
+    neighborhood: text(),
+    address: text(),
+    phone: text(),
+    website: text(),
+    rating: numeric({ precision: 3, scale: 2 }),
+    reviews_count: integer().default(0),
+    google_maps_url: text().unique(),
+    short_id: text().unique(),
+    short_id_clicks: integer().notNull().default(0),
+    short_id_last_click_at: timestamp({ withTimezone: true }),
+    email: text(),
+    instagram: text(),
+    facebook: text(),
+    source: text().notNull().default('scrape'),
+    status: text().default('new'),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index('idx_businesses_user').on(t.userId),
-    index('idx_businesses_user_source').on(t.userId, t.source),
-    index('idx_businesses_created').on(t.createdAt),
+    index('idx_businesses_user').on(t.user_id),
+    index('idx_businesses_user_source').on(t.user_id, t.source),
+    index('idx_businesses_created').on(t.created_at),
     check('businesses_source_check', sql`${t.source} in ('scrape','manual','excel')`),
     check(
       'businesses_status_check',
@@ -93,20 +96,20 @@ export const businesses = pgTable(
 export const scrapeJobs = pgTable(
   'scrape_jobs',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
-    category: text('category').notNull(),
-    city: text('city').notNull(),
-    district: text('district'),
-    neighborhood: text('neighborhood'),
-    status: text('status').default('pending'),
-    totalLeads: integer('total_leads').default(0),
-    currentLead: integer('current_lead').default(0),
-    errorMessage: text('error_message'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    id: uuid().primaryKey().defaultRandom(),
+    user_id: uuid().references(() => users.id, { onDelete: 'cascade' }),
+    category: text().notNull(),
+    city: text().notNull(),
+    district: text(),
+    neighborhood: text(),
+    status: text().default('pending'),
+    total_leads: integer().default(0),
+    current_lead: integer().default(0),
+    error_message: text(),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index('idx_scrape_jobs_user').on(t.userId, t.createdAt.desc()),
+    index('idx_scrape_jobs_user').on(t.user_id, t.created_at.desc()),
     check(
       'scrape_jobs_status_check',
       sql`${t.status} in ('pending','running','completed','failed','stopped')`,
@@ -117,34 +120,34 @@ export const scrapeJobs = pgTable(
 export const lists = pgTable(
   'lists',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
-    name: text('name').notNull(),
-    description: text('description'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    id: uuid().primaryKey().defaultRandom(),
+    user_id: uuid().references(() => users.id, { onDelete: 'cascade' }),
+    name: text().notNull(),
+    description: text(),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('idx_lists_user').on(t.userId, t.createdAt.desc())],
+  (t) => [index('idx_lists_user').on(t.user_id, t.created_at.desc())],
 );
 
 export const outreachLogs = pgTable(
   'outreach_logs',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
-    businessId: uuid('business_id').references(() => businesses.id, { onDelete: 'cascade' }),
-    type: text('type').notNull(),
-    status: text('status').default('sent'),
-    messageContent: text('message_content'),
+    id: uuid().primaryKey().defaultRandom(),
+    user_id: uuid().references(() => users.id, { onDelete: 'cascade' }),
+    business_id: uuid().references(() => businesses.id, { onDelete: 'cascade' }),
+    type: text().notNull(),
+    status: text().default('sent'),
+    message_content: text(),
     // Aynı toplu kampanyadan gelen log'lar aynı batch_id'yi paylaşır (tekilde null);
     // UI bunları tek satırda gruplar.
-    batchId: uuid('batch_id'),
-    listId: uuid('list_id').references(() => lists.id, { onDelete: 'set null' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    batch_id: uuid(),
+    list_id: uuid().references(() => lists.id, { onDelete: 'set null' }),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index('idx_outreach_user').on(t.userId, t.createdAt.desc()),
-    index('idx_outreach_biz').on(t.businessId),
-    index('idx_outreach_batch').on(t.userId, t.batchId),
+    index('idx_outreach_user').on(t.user_id, t.created_at.desc()),
+    index('idx_outreach_biz').on(t.business_id),
+    index('idx_outreach_batch').on(t.user_id, t.batch_id),
     check('outreach_logs_type_check', sql`${t.type} in ('whatsapp','email','instagram')`),
   ],
 );
@@ -152,31 +155,31 @@ export const outreachLogs = pgTable(
 export const listItems = pgTable(
   'list_items',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    listId: uuid('list_id').references(() => lists.id, { onDelete: 'cascade' }),
-    businessId: uuid('business_id').references(() => businesses.id, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    id: uuid().primaryKey().defaultRandom(),
+    list_id: uuid().references(() => lists.id, { onDelete: 'cascade' }),
+    business_id: uuid().references(() => businesses.id, { onDelete: 'cascade' }),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index('idx_list_items_list').on(t.listId),
-    unique('list_items_list_business_key').on(t.listId, t.businessId),
+    index('idx_list_items_list').on(t.list_id),
+    unique('list_items_list_business_key').on(t.list_id, t.business_id),
   ],
 );
 
 export const contacts = pgTable(
   'contacts',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    businessId: uuid('business_id')
+    id: uuid().primaryKey().defaultRandom(),
+    business_id: uuid()
       .notNull()
       .references(() => businesses.id, { onDelete: 'cascade' }),
-    email: text('email'),
-    instagram: text('instagram'),
-    whatsapp: text('whatsapp'),
-    facebook: text('facebook'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    email: text(),
+    instagram: text(),
+    whatsapp: text(),
+    facebook: text(),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('idx_contacts_business').on(t.businessId)],
+  (t) => [index('idx_contacts_business').on(t.business_id)],
 );
 
 // ============================================================================
@@ -191,45 +194,45 @@ export const contacts = pgTable(
 export const whatsappLines = pgTable(
   'whatsapp_lines',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id')
+    id: uuid().primaryKey().defaultRandom(),
+    user_id: uuid()
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    label: text('label').notNull(),
-    phone: text('phone'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    label: text().notNull(),
+    phone: text(),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('idx_wa_lines_user').on(t.userId)],
+  (t) => [index('idx_wa_lines_user').on(t.user_id)],
 );
 
 export const whatsappAutoRules = pgTable(
   'whatsapp_auto_rules',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id')
+    id: uuid().primaryKey().defaultRandom(),
+    user_id: uuid()
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    lineId: text('line_id'), // null = tüm hatlar
-    type: text('type').notNull(),
-    name: text('name').notNull(),
-    keywords: text('keywords').array().default(sql`'{}'`),
-    matchType: text('match_type').default('contains'),
-    response: text('response').notNull(),
-    mediaUrl: text('media_url'),
-    enabled: boolean('enabled').notNull().default(true),
-    priority: integer('priority').notNull().default(0),
-    replyOncePerContact: boolean('reply_once_per_contact').notNull().default(false),
-    cooldownMinutes: integer('cooldown_minutes').notNull().default(0),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    line_id: text(), // null = tüm hatlar
+    type: text().notNull(),
+    name: text().notNull(),
+    keywords: text().array().default(sql`'{}'`),
+    match_type: text().default('contains'),
+    response: text().notNull(),
+    media_url: text(),
+    enabled: boolean().notNull().default(true),
+    priority: integer().notNull().default(0),
+    reply_once_per_contact: boolean().notNull().default(false),
+    cooldown_minutes: integer().notNull().default(0),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index('idx_auto_rules_user').on(t.userId),
-    index('idx_auto_rules_user_enabled').on(t.userId, t.enabled),
+    index('idx_auto_rules_user').on(t.user_id),
+    index('idx_auto_rules_user_enabled').on(t.user_id, t.enabled),
     check('auto_rules_type_check', sql`${t.type} in ('greeting','keyword')`),
     check(
       'auto_rules_match_type_check',
-      sql`${t.matchType} in ('contains','exact','starts_with')`,
+      sql`${t.match_type} in ('contains','exact','starts_with')`,
     ),
   ],
 );
@@ -237,58 +240,58 @@ export const whatsappAutoRules = pgTable(
 export const whatsappGreetedContacts = pgTable(
   'whatsapp_greeted_contacts',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id')
+    id: uuid().primaryKey().defaultRandom(),
+    user_id: uuid()
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    lineId: text('line_id').notNull(),
-    contactPhone: text('contact_phone').notNull(),
-    greetedAt: timestamp('greeted_at', { withTimezone: true }).notNull().defaultNow(),
+    line_id: text().notNull(),
+    contact_phone: text().notNull(),
+    greeted_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index('idx_greeted_user').on(t.userId),
-    unique('greeted_line_phone_key').on(t.lineId, t.contactPhone),
+    index('idx_greeted_user').on(t.user_id),
+    unique('greeted_line_phone_key').on(t.line_id, t.contact_phone),
   ],
 );
 
 export const whatsappRuleReplies = pgTable(
   'whatsapp_rule_replies',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id')
+    id: uuid().primaryKey().defaultRandom(),
+    user_id: uuid()
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    ruleId: uuid('rule_id')
+    rule_id: uuid()
       .notNull()
       .references(() => whatsappAutoRules.id, { onDelete: 'cascade' }),
-    lineId: text('line_id').notNull(),
-    contactPhone: text('contact_phone').notNull(),
-    repliedAt: timestamp('replied_at', { withTimezone: true }).notNull().defaultNow(),
+    line_id: text().notNull(),
+    contact_phone: text().notNull(),
+    replied_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index('idx_rule_replies_rule_contact').on(t.ruleId, t.contactPhone, t.repliedAt.desc()),
-    index('idx_rule_replies_user').on(t.userId),
+    index('idx_rule_replies_rule_contact').on(t.rule_id, t.contact_phone, t.replied_at.desc()),
+    index('idx_rule_replies_user').on(t.user_id),
   ],
 );
 
 export const whatsappFeatureSettings = pgTable(
   'whatsapp_feature_settings',
   {
-    userId: uuid('user_id')
+    user_id: uuid()
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    feature: text('feature').notNull(),
-    enabled: boolean('enabled').notNull().default(true),
-    activeHoursStart: text('active_hours_start'), // "HH:MM" veya null = 24 saat
-    activeHoursEnd: text('active_hours_end'),
-    activeDays: integer('active_days').array().notNull().default(sql`'{0,1,2,3,4,5,6}'`),
-    timezone: text('timezone').notNull().default('Europe/Istanbul'),
-    singleReplyOnly: boolean('single_reply_only').notNull().default(false),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    feature: text().notNull(),
+    enabled: boolean().notNull().default(true),
+    active_hours_start: text(), // "HH:MM" veya null = 24 saat
+    active_hours_end: text(),
+    active_days: integer().array().notNull().default(sql`'{0,1,2,3,4,5,6}'`),
+    timezone: text().notNull().default('Europe/Istanbul'),
+    single_reply_only: boolean().notNull().default(false),
+    updated_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    primaryKey({ columns: [t.userId, t.feature] }),
-    index('idx_feature_settings_user').on(t.userId),
+    primaryKey({ columns: [t.user_id, t.feature] }),
+    index('idx_feature_settings_user').on(t.user_id),
     check(
       'feature_settings_feature_check',
       sql`${t.feature} in ('greeting','autoreply','scheduled')`,
@@ -299,32 +302,32 @@ export const whatsappFeatureSettings = pgTable(
 export const whatsappScheduledCampaigns = pgTable(
   'whatsapp_scheduled_campaigns',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id')
+    id: uuid().primaryKey().defaultRandom(),
+    user_id: uuid()
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    listId: uuid('list_id')
+    list_id: uuid()
       .notNull()
       .references(() => lists.id, { onDelete: 'cascade' }),
-    lineId: text('line_id'),
-    name: text('name'),
-    messageTemplate: text('message_template').notNull(),
-    messageTemplateNoWebsite: text('message_template_no_website'),
-    media: jsonb('media'),
-    minDelaySec: integer('min_delay_sec').default(60),
-    maxDelaySec: integer('max_delay_sec').default(120),
-    coffeeBreakEvery: integer('coffee_break_every').default(20),
-    coffeeBreakMinutes: integer('coffee_break_minutes').default(15),
-    scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
-    status: text('status').notNull().default('pending'),
-    error: text('error'),
-    startedAt: timestamp('started_at', { withTimezone: true }),
-    finishedAt: timestamp('finished_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    line_id: text(),
+    name: text(),
+    message_template: text().notNull(),
+    message_template_no_website: text(),
+    media: jsonb(),
+    min_delay_sec: integer().default(60),
+    max_delay_sec: integer().default(120),
+    coffee_break_every: integer().default(20),
+    coffee_break_minutes: integer().default(15),
+    scheduled_at: timestamp({ withTimezone: true }).notNull(),
+    status: text().notNull().default('pending'),
+    error: text(),
+    started_at: timestamp({ withTimezone: true }),
+    finished_at: timestamp({ withTimezone: true }),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index('idx_scheduled_pending').on(t.scheduledAt),
-    index('idx_scheduled_user').on(t.userId),
+    index('idx_scheduled_pending').on(t.scheduled_at),
+    index('idx_scheduled_user').on(t.user_id),
     check(
       'scheduled_status_check',
       sql`${t.status} in ('pending','running','completed','cancelled','failed')`,
@@ -335,17 +338,17 @@ export const whatsappScheduledCampaigns = pgTable(
 export const whatsappMessageTemplates = pgTable(
   'whatsapp_message_templates',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id')
+    id: uuid().primaryKey().defaultRandom(),
+    user_id: uuid()
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    name: text('name').notNull(),
-    content: text('content').notNull(),
-    media: jsonb('media'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    name: text().notNull(),
+    content: text().notNull(),
+    media: jsonb(),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('idx_msg_templates_user').on(t.userId)],
+  (t) => [index('idx_msg_templates_user').on(t.user_id)],
 );
 
 // ============================================================================
@@ -355,20 +358,20 @@ export const whatsappMessageTemplates = pgTable(
 export const userSettings = pgTable(
   'user_settings',
   {
-    userId: uuid('user_id')
+    user_id: uuid()
       .primaryKey()
       .references(() => users.id, { onDelete: 'cascade' }),
-    shortLinkPublicUrl: text('short_link_public_url'),
-    shortLinkRedirectUrl: text('short_link_redirect_url'),
-    whatsappProxyHost: text('whatsapp_proxy_host'),
-    whatsappProxyPort: integer('whatsapp_proxy_port'),
-    whatsappProxyType: text('whatsapp_proxy_type'),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    short_link_public_url: text(),
+    short_link_redirect_url: text(),
+    whatsapp_proxy_host: text(),
+    whatsapp_proxy_port: integer(),
+    whatsapp_proxy_type: text(),
+    updated_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     check(
       'user_settings_proxy_type_check',
-      sql`${t.whatsappProxyType} is null or ${t.whatsappProxyType} in ('http','socks5')`,
+      sql`${t.whatsapp_proxy_type} is null or ${t.whatsapp_proxy_type} in ('http','socks5')`,
     ),
   ],
 );
@@ -378,33 +381,33 @@ export const userSettings = pgTable(
 // ============================================================================
 
 export const plans = pgTable('plans', {
-  id: text('id').primaryKey(), // 'free' | 'pro' | 'unlimited'
-  name: text('name').notNull(),
-  priceUsd: numeric('price_usd', { precision: 8, scale: 2 }).notNull().default('0'),
-  scrapeLimit: integer('scrape_limit').notNull(),
-  messageLimit: integer('message_limit').notNull(),
-  leadStorage: integer('lead_storage').notNull().default(500),
-  displayOrder: integer('display_order').notNull().default(0),
+  id: text().primaryKey(), // 'free' | 'pro' | 'unlimited'
+  name: text().notNull(),
+  price_usd: numeric({ precision: 8, scale: 2 }).notNull().default('0'),
+  scrape_limit: integer().notNull(),
+  message_limit: integer().notNull(),
+  lead_storage: integer().notNull().default(500),
+  display_order: integer().notNull().default(0),
 });
 
 export const subscriptionTokens = pgTable(
   'subscription_tokens',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    token: text('token').notNull().unique(),
-    planId: text('plan_id')
+    id: uuid().primaryKey().defaultRandom(),
+    token: text().notNull().unique(),
+    plan_id: text()
       .notNull()
       .references(() => plans.id),
-    status: text('status').notNull().default('unredeemed'),
-    durationDays: integer('duration_days').notNull().default(30),
-    note: text('note'),
-    redeemedBy: uuid('redeemed_by').references(() => users.id, { onDelete: 'set null' }),
-    redeemedAt: timestamp('redeemed_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    status: text().notNull().default('unredeemed'),
+    duration_days: integer().notNull().default(30),
+    note: text(),
+    redeemed_by: uuid().references(() => users.id, { onDelete: 'set null' }),
+    redeemed_at: timestamp({ withTimezone: true }),
+    created_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('idx_tokens_status').on(t.status),
-    index('idx_tokens_redeemed_by').on(t.redeemedBy),
+    index('idx_tokens_redeemed_by').on(t.redeemed_by),
     check(
       'tokens_status_check',
       sql`${t.status} in ('unredeemed','redeemed','expired','cancelled')`,
@@ -413,25 +416,25 @@ export const subscriptionTokens = pgTable(
 );
 
 export const subscriptions = pgTable('subscriptions', {
-  userId: uuid('user_id')
+  user_id: uuid()
     .primaryKey()
     .references(() => users.id, { onDelete: 'cascade' }),
-  planId: text('plan_id')
+  plan_id: text()
     .notNull()
     .default('free')
     .references(() => plans.id),
-  currentPeriodStart: timestamp('current_period_start', { withTimezone: true })
+  current_period_start: timestamp({ withTimezone: true })
     .notNull()
     .defaultNow(),
-  currentPeriodEnd: timestamp('current_period_end', { withTimezone: true })
+  current_period_end: timestamp({ withTimezone: true })
     .notNull()
     .default(sql`now() + interval '30 days'`),
-  redeemedTokenId: uuid('redeemed_token_id').references(() => subscriptionTokens.id, {
+  redeemed_token_id: uuid().references(() => subscriptionTokens.id, {
     onDelete: 'set null',
   }),
-  scrapeUsed: integer('scrape_used').notNull().default(0),
-  messageUsed: integer('message_used').notNull().default(0),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  scrape_used: integer().notNull().default(0),
+  message_used: integer().notNull().default(0),
+  updated_at: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
 // ============================================================================
@@ -446,16 +449,16 @@ export const subscriptions = pgTable('subscriptions', {
 export const businessesExpiringSoon = pgView('businesses_expiring_soon').as((qb) =>
   qb
     .select({
-      userId: businesses.userId,
+      user_id: businesses.user_id,
       id: businesses.id,
       name: businesses.name,
-      createdAt: businesses.createdAt,
-      expiresAt: sql<Date>`${businesses.createdAt} + interval '60 days'`.as('expires_at'),
+      created_at: businesses.created_at,
+      expires_at: sql<Date>`${businesses.created_at} + interval '60 days'`.as('expires_at'),
     })
     .from(businesses)
     .where(
-      sql`${businesses.createdAt} < now() - interval '53 days'
-        and ${businesses.createdAt} >= now() - interval '60 days'
+      sql`${businesses.created_at} < now() - interval '53 days'
+        and ${businesses.created_at} >= now() - interval '60 days'
         and not exists (select 1 from list_items li where li.business_id = ${businesses.id})
         and not exists (select 1 from outreach_logs ol where ol.business_id = ${businesses.id})`,
     ),

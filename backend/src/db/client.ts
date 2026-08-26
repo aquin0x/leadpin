@@ -26,9 +26,9 @@ export const closePool = () => pool.end();
  */
 export async function seedPlans(): Promise<void> {
   const rows = [
-    { id: 'free', name: 'Ücretsiz', priceUsd: '0', scrapeLimit: 250, messageLimit: 100, leadStorage: 500, displayOrder: 1 },
-    { id: 'pro', name: 'Pro', priceUsd: '10', scrapeLimit: 1500, messageLimit: 1000, leadStorage: 500, displayOrder: 2 },
-    { id: 'unlimited', name: 'Sınırsız', priceUsd: '20', scrapeLimit: 10000, messageLimit: 5000, leadStorage: 500, displayOrder: 3 },
+    { id: 'free', name: 'Ücretsiz', price_usd: '0', scrape_limit: 250, message_limit: 100, lead_storage: 500, display_order: 1 },
+    { id: 'pro', name: 'Pro', price_usd: '10', scrape_limit: 1500, message_limit: 1000, lead_storage: 500, display_order: 2 },
+    { id: 'unlimited', name: 'Sınırsız', price_usd: '20', scrape_limit: 10000, message_limit: 5000, lead_storage: 500, display_order: 3 },
   ];
   for (const p of rows) {
     await db.insert(plans).values(p).onConflictDoUpdate({ target: plans.id, set: p });
