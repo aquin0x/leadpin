@@ -23,7 +23,7 @@ function userId(req: Request): string {
 
 export const getLines = async (req: Request, res: Response) => {
   const uid = userId(req);
-  return res.json({ lines: listLines(uid) });
+  return res.json({ lines: await listLines(uid) });
 };
 
 export const createLine = async (req: Request, res: Response) => {
@@ -40,7 +40,7 @@ export const createLine = async (req: Request, res: Response) => {
 
 export const getLine = async (req: Request, res: Response) => {
   const uid = userId(req);
-  const line = getLineStatus(uid, String(req.params.id));
+  const line = await getLineStatus(uid, String(req.params.id));
   if (!line) return res.status(404).json({ message: 'Hat bulunamadı' });
   return res.json(line);
 };

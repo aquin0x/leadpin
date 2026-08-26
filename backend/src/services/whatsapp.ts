@@ -2,7 +2,9 @@ import type { Client as WAClient } from 'whatsapp-web.js';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { supabase } from '../utils/supabase';
+import { and, asc, eq } from 'drizzle-orm';
+import { db } from '../db/client';
+import { businesses, listItems, outreachLogs, userSettings, whatsappLines } from '../db/schema';
 
 type Client = WAClient;
 
@@ -67,8 +69,9 @@ interface Session {
 // Windows: %APPDATA%\com.leadpin.app, Linux: ~/.local/share/com.leadpin.app).
 // Dev'de cwd'ye düşer.
 const APP_DATA_DIR = process.env.APP_DATA_DIR || process.cwd();
+// Chromium profil klasörleri burada kalır (session-<lineId>/). Hat üstverisi
+// artık Postgres'te — bkz. whatsapp_lines.
 const SESSION_ROOT = path.resolve(APP_DATA_DIR, '.wwebjs_auth');
-const LINES_FILE = path.join(SESSION_ROOT, '_lines.json');
 
 // Keyed by lineId (UUID)
 const sessions = new Map<string, Session>();
@@ -128,45 +131,56 @@ function ensureRoot() {
   try { fs.mkdirSync(SESSION_ROOT, { recursive: true }); } catch {}
 }
 
-function loadLines(): Record<string, LineMeta[]> {
-  try {
-    ensureRoot();
-    if (!fs.existsSync(LINES_FILE)) return {};
-    const raw = fs.readFileSync(LINES_FILE, 'utf8');
-    return JSON.parse(raw) || {};
-  } catch {
-    return {};
-  }
+// Hat üstverisi eskiden .wwebjs_auth/_lines.json içinde, kilitsiz bir JSON
+// dosyasında tutuluyordu: iki process aynı anda yazarsa kayıt kaybolduğu için
+// backend tek process olmak zorundaydı. Artık Postgres'te.
+
+function toMeta(row: { id: string; user_id: string; label: string; phone: string | null; created_at: Date }): LineMeta {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    label: row.label,
+    phone: row.phone ?? undefined,
+    createdAt: row.created_at.getTime(),
+  };
 }
 
-function saveLines(all: Record<string, LineMeta[]>) {
+async function getUserLines(userId: string): Promise<LineMeta[]> {
+  const rows = await db
+    .select()
+    .from(whatsappLines)
+    .where(eq(whatsappLines.user_id, userId))
+    .orderBy(asc(whatsappLines.created_at));
+  return rows.map(toMeta);
+}
+
+async function allLines(): Promise<LineMeta[]> {
+  const rows = await db.select().from(whatsappLines).orderBy(asc(whatsappLines.created_at));
+  return rows.map(toMeta);
+}
+
+async function upsertLine(meta: LineMeta): Promise<void> {
   try {
-    ensureRoot();
-    fs.writeFileSync(LINES_FILE, JSON.stringify(all, null, 2), 'utf8');
+    await db
+      .insert(whatsappLines)
+      .values({ id: meta.id, user_id: meta.userId, label: meta.label, phone: meta.phone })
+      .onConflictDoUpdate({
+        target: whatsappLines.id,
+        set: { label: meta.label, phone: meta.phone },
+      });
   } catch (err: any) {
-    console.error('[WA] lines save failed:', err.message);
+    console.error('[WA] hat kaydı yazılamadı:', err.message);
   }
 }
 
-function getUserLines(userId: string): LineMeta[] {
-  return loadLines()[userId] || [];
-}
-
-function upsertLine(meta: LineMeta) {
-  const all = loadLines();
-  const arr = all[meta.userId] || [];
-  const idx = arr.findIndex((l) => l.id === meta.id);
-  if (idx >= 0) arr[idx] = meta;
-  else arr.push(meta);
-  all[meta.userId] = arr;
-  saveLines(all);
-}
-
-function deleteLineMeta(userId: string, lineId: string) {
-  const all = loadLines();
-  const arr = (all[userId] || []).filter((l) => l.id !== lineId);
-  all[userId] = arr;
-  saveLines(all);
+async function deleteLineMeta(userId: string, lineId: string): Promise<void> {
+  try {
+    await db
+      .delete(whatsappLines)
+      .where(and(eq(whatsappLines.id, lineId), eq(whatsappLines.user_id, userId)));
+  } catch (err: any) {
+    console.error('[WA] hat kaydı silinemedi:', err.message);
+  }
 }
 
 async function getProxyForUser(userId: string): Promise<{
@@ -176,15 +190,19 @@ async function getProxyForUser(userId: string): Promise<{
 } | null> {
   // 1) Kullanıcı ayarı (production)
   try {
-    const { data } = await supabase
-      .from('user_settings')
-      .select('whatsapp_proxy_host, whatsapp_proxy_port, whatsapp_proxy_type')
-      .eq('user_id', userId)
-      .maybeSingle();
-    const host = data?.whatsapp_proxy_host?.trim();
-    const port = data?.whatsapp_proxy_port;
+    const [row] = await db
+      .select({
+        host: userSettings.whatsapp_proxy_host,
+        port: userSettings.whatsapp_proxy_port,
+        type: userSettings.whatsapp_proxy_type,
+      })
+      .from(userSettings)
+      .where(eq(userSettings.user_id, userId))
+      .limit(1);
+    const host = row?.host?.trim();
+    const port = row?.port;
     if (host && port) {
-      const type = data?.whatsapp_proxy_type === 'socks5' ? 'socks5' : 'http';
+      const type = row?.type === 'socks5' ? 'socks5' : 'http';
       return { host, port: Number(port), type };
     }
   } catch (e: any) {
@@ -266,7 +284,7 @@ async function createSession(meta: LineMeta): Promise<Session> {
       const wid = (client as any).info?.wid?.user;
       if (wid) {
         session.phone = String(wid);
-        upsertLine({
+        void upsertLine({
           id: meta.id,
           userId: meta.userId,
           label: session.label,
@@ -295,7 +313,7 @@ async function getOrCreateSession(meta: LineMeta): Promise<Session> {
 }
 
 export async function initLine(userId: string, lineId: string): Promise<Session | null> {
-  const metas = getUserLines(userId);
+  const metas = await getUserLines(userId);
   const meta = metas.find((l) => l.id === lineId);
   if (!meta) return null;
 
@@ -343,13 +361,14 @@ export async function initLine(userId: string, lineId: string): Promise<Session 
 
 export async function addLine(userId: string, label?: string): Promise<Session> {
   const lineId = crypto.randomUUID();
+  const existing = await getUserLines(userId);
   const meta: LineMeta = {
     id: lineId,
     userId,
-    label: label?.trim() || `Hat ${getUserLines(userId).length + 1}`,
+    label: label?.trim() || `Hat ${existing.length + 1}`,
     createdAt: Date.now(),
   };
-  upsertLine(meta);
+  await upsertLine(meta);
   const session = await createSession(meta);
   // Start initialize in background so caller can return fast
   initLine(userId, lineId).catch((e) =>
@@ -359,7 +378,7 @@ export async function addLine(userId: string, label?: string): Promise<Session> 
 }
 
 export async function removeLine(userId: string, lineId: string): Promise<boolean> {
-  const metas = getUserLines(userId);
+  const metas = await getUserLines(userId);
   const meta = metas.find((l) => l.id === lineId);
   if (!meta) return false;
   const session = sessions.get(lineId);
@@ -368,7 +387,7 @@ export async function removeLine(userId: string, lineId: string): Promise<boolea
     try { await session.client.destroy(); } catch {}
     sessions.delete(lineId);
   }
-  deleteLineMeta(userId, lineId);
+  await deleteLineMeta(userId, lineId);
   // Profil klasörünü sil
   try {
     fs.rmSync(path.join(SESSION_ROOT, `session-${lineId}`), { recursive: true, force: true });
@@ -399,8 +418,8 @@ export interface LineStatus {
   createdAt: number;
 }
 
-export function listLines(userId: string): LineStatus[] {
-  const metas = getUserLines(userId);
+export async function listLines(userId: string): Promise<LineStatus[]> {
+  const metas = await getUserLines(userId);
   return metas
     .sort((a, b) => a.createdAt - b.createdAt)
     .map((m) => {
@@ -417,8 +436,8 @@ export function listLines(userId: string): LineStatus[] {
     });
 }
 
-export function getLineStatus(userId: string, lineId: string): LineStatus | null {
-  const metas = getUserLines(userId);
+export async function getLineStatus(userId: string, lineId: string): Promise<LineStatus | null> {
+  const metas = await getUserLines(userId);
   const m = metas.find((x) => x.id === lineId);
   if (!m) return null;
   const s = sessions.get(lineId);
@@ -445,7 +464,7 @@ function pickReadySession(userId: string): Session | null {
 // LocalAuth oturumu `session-<lineId>/` altında diskte kaldığı için yeni
 // client yeniden auth olur ve doğrudan 'ready' state'ine döner.
 export async function restartLinesForUser(userId: string): Promise<void> {
-  const metas = getUserLines(userId);
+  const metas = await getUserLines(userId);
   for (const meta of metas) {
     const existing = sessions.get(meta.id);
     if (existing) {
@@ -466,15 +485,13 @@ export async function restartLinesForUser(userId: string): Promise<void> {
 
 // Bootstrap: backend başlarken kayıtlı tüm hatları otomatik başlat
 export async function bootstrapLines(): Promise<void> {
-  const all = loadLines();
-  for (const userId of Object.keys(all)) {
-    for (const meta of all[userId]) {
-      try {
-        await createSession(meta);
-        initLine(userId, meta.id).catch(() => {});
-      } catch (e: any) {
-        console.error(`[WA:${meta.id}] bootstrap error:`, e?.message);
-      }
+  const metas = await allLines();
+  for (const meta of metas) {
+    try {
+      await createSession(meta);
+      initLine(meta.userId, meta.id).catch(() => {});
+    } catch (e: any) {
+      console.error(`[WA:${meta.id}] bootstrap error:`, e?.message);
     }
   }
 }
@@ -539,7 +556,7 @@ async function logOutreach(
   batchId?: string,
   listId?: string
 ) {
-  await supabase.from('outreach_logs').insert({
+  await db.insert(outreachLogs).values({
     business_id: businessId,
     user_id: userId,
     type: 'whatsapp',
@@ -594,20 +611,25 @@ export async function sendSingleMessage(params: {
   }
 
   if (!session) {
-    const userLines = listLines(userId);
+    const userLines = await listLines(userId);
     if (userLines.length === 0) {
       return { ok: false, reason: 'no_line', hint: 'Önce bir WhatsApp hattı ekleyin.' };
     }
     return { ok: false, reason: 'not_ready', lines: userLines };
   }
 
-  const { data: biz, error } = await supabase
-    .from('businesses')
-    .select('id, name, phone, website, short_id')
-    .eq('id', businessId)
-    .eq('user_id', userId)
-    .single();
-  if (error || !biz) return { ok: false, reason: 'send_failed', error: 'İşletme bulunamadı' };
+  const [biz] = await db
+    .select({
+      id: businesses.id,
+      name: businesses.name,
+      phone: businesses.phone,
+      website: businesses.website,
+      short_id: businesses.short_id,
+    })
+    .from(businesses)
+    .where(and(eq(businesses.id, businessId), eq(businesses.user_id, userId)))
+    .limit(1);
+  if (!biz) return { ok: false, reason: 'send_failed', error: 'İşletme bulunamadı' };
 
   const phone = biz.phone ? normalizePhone(biz.phone) : null;
   if (!phone) {
@@ -677,15 +699,21 @@ export async function startCampaign(params: StartCampaignParams): Promise<Campai
     throw new Error('Zaten çalışan bir kampanya var.');
   }
 
-  const { data: items, error } = await supabase
-    .from('list_items')
-    .select('business:businesses(id, name, phone, website, short_id)')
-    .eq('list_id', listId);
-  if (error) throw new Error(error.message);
+  // Eskiden `select('business:businesses(...)')` gömülü seçimiydi; JOIN'e
+  // çevrildi. Liste sahipliği çağıran katmanda doğrulanıyor.
+  const rows = await db
+    .select({
+      id: businesses.id,
+      name: businesses.name,
+      phone: businesses.phone,
+      website: businesses.website,
+      short_id: businesses.short_id,
+    })
+    .from(listItems)
+    .innerJoin(businesses, eq(listItems.business_id, businesses.id))
+    .where(eq(listItems.list_id, listId));
 
-  const businesses: Business[] = (items || [])
-    .map((i: any) => i.business)
-    .filter(Boolean);
+  const leads: Business[] = rows;
 
   const batchId = crypto.randomUUID();
 
@@ -693,7 +721,7 @@ export async function startCampaign(params: StartCampaignParams): Promise<Campai
     id: `${listId}-${Date.now()}`,
     userId,
     listId,
-    total: businesses.length,
+    total: leads.length,
     processed: 0,
     sent: 0,
     failed: 0,
@@ -707,7 +735,7 @@ export async function startCampaign(params: StartCampaignParams): Promise<Campai
   const chosenLineId = session.lineId;
 
   (async () => {
-    for (const biz of businesses) {
+    for (const biz of leads) {
       const current = campaigns.get(userId);
       if (!current || current.stopRequested) {
         campaign.status = 'stopped';
