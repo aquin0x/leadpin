@@ -15,7 +15,7 @@ import { ScrapePanel } from "@/components/dashboard/ScrapePanel"
 import { useBusinesses } from "@/hooks/useBusinesses"
 import { useQueryClient } from "@tanstack/react-query"
 import { queryKeys } from "@/lib/query-keys"
-import { supabase } from "@/lib/supabase"
+import { auth } from "@/lib/auth-client"
 import { SavedLists } from "@/components/dashboard/SavedLists"
 import { ListDetail } from "@/components/dashboard/ListDetail"
 import { WhatsAppPage } from "@/components/dashboard/WhatsAppPage"
@@ -121,7 +121,7 @@ function DashboardContent() {
   }
 
   const handleLogout = async () => {
-    await supabase.auth.signOut()
+    await auth.signOut()
     toast.success("Çıkış yapıldı")
     navigate("/auth")
   }

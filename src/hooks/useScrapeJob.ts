@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { supabase } from "@/lib/supabase"
+import { auth } from "@/lib/auth-client"
 import { API_URL } from "@/lib/api-client"
 import type { ScrapeJob } from "@/types"
 
@@ -9,7 +9,7 @@ export function useScrapeJob(jobId: string | null) {
   const fetchJobStatus = useCallback(async (): Promise<"ok" | "error"> => {
     if (!jobId) return "ok"
     try {
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await auth.getSession()
       const response = await fetch(`${API_URL}/api/scrape/${jobId}`, {
         headers: { Authorization: `Bearer ${session?.access_token || ""}` },
       })

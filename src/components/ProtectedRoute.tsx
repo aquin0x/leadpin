@@ -1,20 +1,22 @@
 import { useEffect, useState } from "react"
 import { Navigate } from "react-router-dom"
-import { supabase } from "@/lib/supabase"
+import { auth } from "@/lib/auth-client"
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<"loading" | "auth" | "unauth">("loading")
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    auth.getSession().then((session) => {
       setStatus(session ? "auth" : "unauth")
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    // Supabase'de bu `data.subscription.unsubscribe()` idi; yeni istemci
+    // doğrudan iptal fonksiyonunu döner.
+    const unsubscribe = auth.onAuthStateChange((session) => {
       setStatus(session ? "auth" : "unauth")
     })
 
-    return () => subscription.unsubscribe()
+    return unsubscribe
   }, [])
 
   if (status === "loading") {

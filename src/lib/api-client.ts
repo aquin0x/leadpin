@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase"
+import { auth } from "@/lib/auth-client"
 import type { BusinessFilters, PaginatedBusinesses, Business, ScrapeJob } from "@/types"
 
 // Sunucu dağıtımında "/" (panel ve API aynı origin), masaüstünde
@@ -17,7 +17,7 @@ class ApiError extends Error {
 }
 
 async function getAuthHeaders(): Promise<HeadersInit> {
-  const { data: { session } } = await supabase.auth.getSession()
+  const session = await auth.getSession()
 
   const headers: HeadersInit = { "Content-Type": "application/json" }
 

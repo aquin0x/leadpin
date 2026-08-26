@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { supabase } from "@/lib/supabase"
+import { auth } from "@/lib/auth-client"
 import toast from "react-hot-toast"
 
 export function AuthPage() {
@@ -23,13 +23,10 @@ export function AuthPage() {
     e.preventDefault()
     setIsLoginLoading(true)
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: loginEmail,
-      password: loginPassword,
-    })
-
-    if (error) {
-      toast.error(error.message)
+    try {
+      await auth.signIn(loginEmail, loginPassword)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Giriş başarısız")
       setIsLoginLoading(false)
       return
     }
@@ -41,26 +38,28 @@ export function AuthPage() {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (registerPassword.length < 6) {
-      toast.error("Şifre en az 6 karakter olmalıdır")
+    // Sunucu da en az 8 karakter istiyor; burada da aynı sınır uygulanır ki
+    // kullanıcı gereksiz bir istek turu beklemesin.
+    if (registerPassword.length < 8) {
+      toast.error("Şifre en az 8 karakter olmalıdır")
       return
     }
 
     setIsRegisterLoading(true)
 
-    const { error } = await supabase.auth.signUp({
-      email: registerEmail,
-      password: registerPassword,
-    })
-
-    if (error) {
-      toast.error(error.message)
+    try {
+      await auth.signUp(registerEmail, registerPassword)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Kayıt başarısız")
       setIsRegisterLoading(false)
       return
     }
 
-    toast.success("Doğrulama emaili gönderildi")
+    // Supabase'de doğrulama e-postası bekleniyordu; kendi auth'umuzda kayıt
+    // doğrudan oturum açar.
+    toast.success("Kayıt başarılı!")
     setIsRegisterLoading(false)
+    navigate("/dashboard")
   }
 
   return (

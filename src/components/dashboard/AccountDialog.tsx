@@ -20,7 +20,7 @@ import {
   type WhatsAppProxyType,
 } from "@/lib/api-client"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { supabase } from "@/lib/supabase"
+import { auth } from "@/lib/auth-client"
 import { useIsLinkOwner } from "@/hooks/useIsLinkOwner"
 import { useConfirm } from "@/components/ui/confirm-dialog"
 import toast from "react-hot-toast"
@@ -60,11 +60,11 @@ function ProfileSection() {
   const [emailSubmitting, setEmailSubmitting] = useState(false)
 
   const loadUser = () => {
-    supabase.auth.getUser().then(({ data }) => {
-      setEmail(data.user?.email ?? null)
-      // Supabase'de onaylanmamış yeni email new_email alanında tutulur
-      const nextEmail = (data.user as any)?.new_email ?? null
-      setPendingEmail(nextEmail)
+    auth.getUser().then((user) => {
+      setEmail(user?.email ?? null)
+      // Supabase'de onay bekleyen adres new_email alanında tutuluyordu. Kendi
+      // auth'umuzda e-posta doğrulaması yok — değişiklik anında geçerli olur.
+      setPendingEmail(null)
       setLoading(false)
     })
   }
@@ -99,31 +99,15 @@ function ProfileSection() {
 
     setEmailSubmitting(true)
     try {
-      // 1) Mevcut şifreyi doğrula
-      const { error: signInErr } = await supabase.auth.signInWithPassword({
-        email,
-        password: emailPassword,
-      })
-      if (signInErr) {
-        toast.error("Mevcut şifre yanlış")
-        return
-      }
-
-      // 2) E-posta değiştir — Supabase yeni adrese doğrulama maili gönderir
-      const { error: updErr } = await supabase.auth.updateUser({
-        email: trimmed,
-      })
-      if (updErr) {
-        toast.error(updErr.message || "E-posta güncellenemedi")
-        return
-      }
-
-      toast.success(`Doğrulama e-postası ${trimmed} adresine gönderildi`, { duration: 5000 })
+      // Mevcut şifre sunucu tarafında doğrulanıyor — eskiden burada ayrıca
+      // signInWithPassword çağrılıyordu, artık gerekmiyor.
+      await auth.updateEmail(emailPassword, trimmed)
+      toast.success("E-posta güncellendi")
       resetEmailForm()
       setShowEmailForm(false)
       loadUser()
     } catch (e: any) {
-      toast.error(e.message || "Bir hata oluştu")
+      toast.error(e.message || "E-posta güncellenemedi")
     } finally {
       setEmailSubmitting(false)
     }
@@ -132,36 +116,20 @@ function ProfileSection() {
   const handleChangePassword = async () => {
     if (!email) return toast.error("E-posta bulunamadı")
     if (!oldPassword) return toast.error("Mevcut şifreyi girin")
-    if (newPassword.length < 6) return toast.error("Yeni şifre en az 6 karakter olmalı")
+    // Sunucu sınırı 8 karakter — burada da aynısı uygulanır.
+    if (newPassword.length < 8) return toast.error("Yeni şifre en az 8 karakter olmalı")
     if (newPassword !== confirmPassword) return toast.error("Şifreler eşleşmiyor")
     if (newPassword === oldPassword) return toast.error("Yeni şifre eskisiyle aynı olamaz")
 
     setSubmitting(true)
     try {
-      // 1) Mevcut şifreyi doğrula
-      const { error: signInErr } = await supabase.auth.signInWithPassword({
-        email,
-        password: oldPassword,
-      })
-      if (signInErr) {
-        toast.error("Mevcut şifre yanlış")
-        return
-      }
-
-      // 2) Yeni şifreyi ayarla
-      const { error: updErr } = await supabase.auth.updateUser({
-        password: newPassword,
-      })
-      if (updErr) {
-        toast.error(updErr.message || "Şifre güncellenemedi")
-        return
-      }
-
+      // Mevcut şifre sunucu tarafında doğrulanıyor.
+      await auth.updatePassword(oldPassword, newPassword)
       toast.success("Şifre güncellendi")
       resetForm()
       setShowPasswordForm(false)
     } catch (e: any) {
-      toast.error(e.message || "Bir hata oluştu")
+      toast.error(e.message || "Şifre güncellenemedi")
     } finally {
       setSubmitting(false)
     }
