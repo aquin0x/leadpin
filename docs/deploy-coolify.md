@@ -148,7 +148,21 @@ Container içinde kabuk: Coolify → kaynak → **Terminal**
 
 ## 8. Bu adımda çözülmeyenler (bilerek)
 
-- Auto-reply / karşılama / şablon / zamanlanmış kampanya sekmeleri **404 veriyor**:
-  tabloları var, endpoint'leri hiç yazılmamış. Ayrı bir iş olarak planlandı.
 - Masaüstü (Tauri) sürümü derleniyor ama artık kendi başına çalışamaz — Postgres'e
   erişmesi gerekir. Postgres dışarı açılmadığı sürece pratikte kullanılamaz.
+
+## 9. Otomasyon davranışı (bilinmesi gerekenler)
+
+- **Karşılama** yalnızca bize ilk kez yazan ve daha önce bizim mesaj
+  göndermediğimiz kişilere gider. Kampanya gönderdiğin bir lead cevap yazarsa
+  karşılama almaz.
+- Bir mesaj hem karşılamayı hem bir anahtar kelimeyi tetiklerse **sadece
+  karşılama** gönderilir; kelime cevabı bir sonraki mesaja kalır.
+- **Zamanlanmış kampanyanın** vakti aktif pencere dışında gelirse kampanya
+  `failed` olur ve beklemez. Hata mesajı pencereyi ve zaman dilimini yazar.
+  Gece yarısını aşan pencereler (ör. 22:00–06:00) desteklenir.
+- "Kişi başına 1 oto-cevap" açıksa, hangi kural olursa olsun o kişiye toplam
+  bir cevap gider; kural bazlı cooldown ve "kişi başına bir kez" ayarlarının
+  üstünde çalışır.
+- Otomasyon yalnızca **birebir sohbetlerde** çalışır; gruplar ve durum
+  yayınları yok sayılır.
