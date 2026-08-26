@@ -13,30 +13,22 @@ FROM node:22-bookworm AS frontend-build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci
+# Bir kez tekrar denenir: esbuild'in kurulum betiği, henüz yazdığı ikiliyi
+# doğrulamak için çalıştırıyor ve Docker'ın overlay dosya sisteminde arada
+# ETXTBSY alıyor. Kararsız bir yarış durumu — ikinci deneme geçiyor. Bu
+# olmadan Coolify deploy'ları ara sıra sebepsiz düşerdi.
+RUN npm ci || npm ci
 
 COPY . .
 
 # Vite VITE_* değişkenlerini BUILD ANINDA bundle'a gömer; runtime'da verilemezler.
-# Coolify tarafında bunlar "Build Variable" olarak işaretlenmiş olmalı.
-# process.env'deki VITE_* değerleri .env dosyalarını ezer, dolayısıyla bu arg'lar
-# repodaki herhangi bir .env'den önceliklidir.
-# Not: docker build burada "SecretsUsedInArgOrEnv" uyarısı verir. Anon key bir sır
-# DEĞİL — tanımı gereği tarayıcıya gönderilir ve RLS ile korunur. Servis rolü
-# anahtarı ise buraya asla girmez; o yalnızca runtime env'inde durur.
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_ANON_KEY
+# Sunucu dağıtımında "/" kullanılır: panel ve API aynı origin'de olduğu için
+# istekler relative gider ve CORS devreye girmez.
+#
+# Supabase artık kullanılmadığı için VITE_SUPABASE_* argümanları kaldırıldı;
+# frontend'in tek yapılandırması bu.
 ARG VITE_API_URL=/
-ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
-    VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY \
-    VITE_API_URL=$VITE_API_URL
-
-# Anahtarlar boşsa src/lib/supabase.ts çalışma anında exception fırlatır ve panel
-# beyaz ekran verir. Hatayı build'de yakalamak, tarayıcı konsolunda aramaktan iyidir.
-RUN test -n "$VITE_SUPABASE_URL" \
-      || (echo "HATA: VITE_SUPABASE_URL build argümanı boş. Coolify'da 'Build Variable' olarak tanımlayın." && exit 1) \
- && test -n "$VITE_SUPABASE_ANON_KEY" \
-      || (echo "HATA: VITE_SUPABASE_ANON_KEY build argümanı boş. Coolify'da 'Build Variable' olarak tanımlayın." && exit 1)
+ENV VITE_API_URL=$VITE_API_URL
 
 RUN npm run build
 
@@ -101,7 +93,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # imajının kendi /usr/local/bin/docker-entrypoint.sh dosyası var, aynı adı
 # kullanmak onu sessizce ezer.
 COPY docker-entrypoint.sh /usr/local/bin/leadpin-entrypoint.sh
-RUN chmod +x /usr/local/bin/leadpin-entrypoint.sh
+# CRLF satır sonu shebang'i bozar ve container "exec ... No such file or
+# directory" ile ölür — hata mesajı da sebebi hiç düşündürmez. .gitattributes
+# bunu commit sırasında normalleştiriyor, ama Docker çalışma ağacından build
+# ettiği için Windows'ta düzenlenmiş bir dosya yine CRLF ile gelebilir.
+RUN sed -i 's/\r$//' /usr/local/bin/leadpin-entrypoint.sh \
+ && chmod +x /usr/local/bin/leadpin-entrypoint.sh
 
 # Dizinler BOŞKEN sahiplenilir, sonra node kullanıcısına geçilir. Böylece Chrome
 # ve node_modules zaten doğru sahiplikle oluşur.
@@ -124,6 +121,11 @@ RUN npx puppeteer browsers install chrome
 
 COPY --chown=node:node --from=backend-build /app/backend/dist ./dist
 COPY --chown=node:node --from=frontend-build /app/dist /app/public
+
+# Migration'lar açılışta uygulanır (entrypoint). drizzle-kit devDependency
+# olduğu için üretim imajında yok; bunun yerine dist'e derlenmiş küçük bir
+# migrate betiği kullanılır.
+COPY --chown=node:node backend/drizzle ./drizzle
 
 WORKDIR /app
 EXPOSE 4000

@@ -1,17 +1,44 @@
 # LeadPin — Coolify Deploy Rehberi
 
-Bu belge, LeadPin'in VPS'te (Coolify) ayağa kaldırılması için izlenecek adımları
-içerir. Tasarım gerekçeleri için bkz.
-[spec](superpowers/specs/2026-08-26-vps-coolify-deploy-design.md).
+LeadPin'in VPS'te (Coolify) ayağa kaldırılması. Tasarım gerekçeleri için bkz.
+[spec](superpowers/specs/2026-08-26-postgres-migration-design.md).
 
 **Hedef ortam:** Coolify v4.1.2 · `92.5.1.12` · proje `aqu-vps` / env `production`
 
+Uygulama artık Supabase kullanmıyor. Veri, sunucuda zaten çalışan merkezi
+`postgres:18-alpine` örneğindeki `leadpin` veritabanında durur; kimlik doğrulama
+uygulamanın kendi JWT'siyle, medya ise kalıcı diskte tutulur.
+
 ---
 
-## 1. Kaynağı oluştur
+## 1. Veritabanını hazırla
 
-Coolify → `aqu-vps` → `production` → **+ New** → **Application** → **Public/Private
-Repository**
+Coolify → Databases → merkezi `postgres` kaynağı → **Terminal**:
+
+```sql
+create database leadpin;
+create user leadpin_app with password 'GÜÇLÜ-BİR-PAROLA-ÜRET';
+grant all privileges on database leadpin to leadpin_app;
+\c leadpin
+grant all on schema public to leadpin_app;
+```
+
+Tabloları elle kurmaya gerek yok — container açılışta migration'ları kendisi
+uygular.
+
+Bağlantı dizesi (Coolify iç ağı üzerinden, dışarı açılmadan):
+
+```
+postgres://leadpin_app:PAROLA@<postgres-servis-adı>:5432/leadpin
+```
+
+Servis adını Coolify'daki Postgres kaynağının **Postgres URL (internal)**
+alanından alabilirsin.
+
+## 2. Uygulama kaynağını oluştur
+
+Coolify → `aqu-vps` → `production` → **+ New** → **Application** →
+**Public Repository**
 
 | Alan | Değer |
 |------|-------|
@@ -22,42 +49,36 @@ Repository**
 | Port | `4000` |
 | Name | `leadpin` |
 
----
+## 3. Ortam değişkenleri
 
-## 2. Ortam değişkenleri
-
-Coolify → kaynak → **Environment Variables**
-
-### 2.1 Build Variables — "Build Variable?" kutusu İŞARETLİ olmalı
-
-> Vite bu değerleri **build anında** JS bundle'ına gömer; runtime'da verilirse
-> frontend boş anahtarlarla derlenir. Dockerfile bu durumu yakalayıp build'i
-> hata ile durdurur, yani yanlış yaparsanız sessizce bozulmaz.
+**Build Variable** (kutu İŞARETLİ):
 
 | Anahtar | Değer |
 |---------|-------|
-| `VITE_SUPABASE_URL` | mevcut `backend/.env` içindeki `SUPABASE_URL` ile aynı |
-| `VITE_SUPABASE_ANON_KEY` | Supabase panelindeki **anon/public** anahtar (service role DEĞİL) |
 | `VITE_API_URL` | `/` |
 
-### 2.2 Runtime Variables — "Build Variable?" kutusu İŞARETSİZ
+> Vite bunu build anında bundle'a gömer. Zaten Dockerfile'da varsayılanı `/`,
+> yani atlanırsa da doğru değerle derlenir.
+
+**Runtime** (kutu İŞARETSİZ):
 
 | Anahtar | Değer | Not |
 |---------|-------|-----|
-| `SUPABASE_URL` | mevcut bulut değeri | |
-| `SUPABASE_SERVICE_ROLE_KEY` | mevcut bulut değeri | **gizli** — sadece buraya |
-| `NODE_ENV` | `production` | |
+| `DATABASE_URL` | §1'deki bağlantı dizesi | **gizli** |
+| `JWT_SECRET` | `openssl rand -hex 32` çıktısı | **gizli**, en az 32 karakter — kısa olursa uygulama açılışta hata verir |
+| `SIGNUP_ENABLED` | `false` | `true` yapılmadıkça kayıt kapalı |
+| `SEED_ADMIN_EMAIL` | ilk giriş e-postan | |
+| `SEED_ADMIN_PASSWORD` | ilk giriş şifren | En az 8 karakter. İlk açılışta hesap oluşur; **sonra bu ikisini kaldırabilirsin** — tablo doluysa hiçbir şey yapmazlar, mevcut şifreyi ezmezler |
+| `PUBLIC_BASE_URL` | uygulamanın dış URL'i | Yüklenen medyanın URL'lerinde kullanılır |
+| `ALLOWED_ORIGINS` | uygulamanın dış URL'i | §5'te netleşir |
+| `SHORT_LINK_REDIRECT_URL` | yedek landing adresi | Kullanıcı kendi adresini ayarlarsa o kullanılır |
 | `TZ` | `Europe/Istanbul` | |
-| `ALLOWED_ORIGINS` | uygulamanın dış URL'i | §4'te netleşecek, önce boş bırakılabilir |
-| `SHORT_LINK_REDIRECT_URL` | mevcut değer | kullanıcı ayarı yoksa yedek |
 
-**Tanımlanmayacaklar** (imajda zaten ayarlı, elle verilirse yanlış olur):
+**Tanımlanmayacaklar** (imajda ayarlı, elle verilirse yanlış olur):
 `PORT`, `PUBLIC_DIR`, `APP_DATA_DIR`, `PUPPETEER_CACHE_DIR`,
-`PUPPETEER_EXECUTABLE_PATH`, `PUPPETEER_HEADLESS`
+`PUPPETEER_EXECUTABLE_PATH`, `PUPPETEER_HEADLESS`, `NODE_ENV`
 
----
-
-## 3. Kalıcı disk — **atlanırsa her deploy'da QR okutmak gerekir**
+## 4. Kalıcı disk — **atlanırsa her deploy'da QR okutmak gerekir**
 
 Coolify → kaynak → **Persistent Storage** → **+ Add**
 
@@ -66,54 +87,46 @@ Coolify → kaynak → **Persistent Storage** → **+ Add**
 | Name | `leadpin-data` |
 | Mount Path | `/data` |
 
-Burada WhatsApp oturumları (`.wwebjs_auth/session-<lineId>/`) ve hat listesi
-(`_lines.json`) tutulur. Container yeniden başladığında `bootstrapLines()` bunları
-okuyup hatları otomatik `ready` durumuna getirir.
+Burada iki şey durur:
+- `/data/.wwebjs_auth/session-<lineId>/` — WhatsApp Chromium oturumları
+- `/data/media/<userId>/` — yüklenen medya
 
----
+Hat üstverisi artık veritabanında, ama Chromium oturum dosyaları hâlâ diskte;
+volume olmadan her deploy hatları sıfırlar.
 
-## 4. Kaynak limiti ve alan adı
+## 5. Kaynak limiti ve alan adı
 
 **Resource Limits** → Memory: `4G`
-(Her WhatsApp hattı ayrı bir headless Chromium ≈ 250–400 MB; tarama sırasında bir
-Chromium daha açılır. Bu limit sunucudaki diğer uygulamaları korur.)
+(Her WhatsApp hattı ayrı bir headless Chromium ≈ 250–400 MB; tarama sırasında
+bir Chromium daha açılır.)
 
 **Domains:**
 1. Önce `http://92.5.1.12:<atanan port>` ile doğrula.
-2. Doğrulama listesi geçince Coolify'dan sslip.io alan adı ver:
+2. Doğrulama listesi geçince sslip.io alan adı ver:
    `https://leadpin.92-5-1-12.sslip.io` → Let's Encrypt sertifikasını Coolify alır.
-   (Bu desen sunucuda `fraxlabs-web` ve `millitavir-web` üzerinde zaten çalışıyor.)
-3. Alan adı kesinleşince `ALLOWED_ORIGINS`'i o adrese ayarla ve redeploy et.
+   Bu desen sunucuda `fraxlabs-web` ve `millitavir-web` üzerinde zaten çalışıyor.
+3. Alan adı kesinleşince `ALLOWED_ORIGINS` ve `PUBLIC_BASE_URL`'i o adrese
+   ayarla ve **yeniden deploy et** (`PUBLIC_BASE_URL` medya URL'lerine yazılır).
 
-> TLS, **B adımına geçmeden önce** açılmalı — aksi halde oturum jetonu düz metin gider.
-
----
-
-## 5. Supabase tarafında yapılacak tek ayar
-
-Panel herkese açık bir adreste olacak ve `src/pages/AuthPage.tsx` kayıt formu içeriyor.
-
-Supabase Dashboard → **Authentication → Sign In / Providers → Email** →
-**"Allow new users to sign up"** kapatılacak.
+> TLS'i erken aç: HTTPS olmadan oturum jetonu düz metin gider.
 
 ---
 
 ## 6. Doğrulama listesi
 
-Deploy sonrası sırayla:
-
 | # | Test | Beklenen |
 |---|------|----------|
 | 1 | `curl <URL>/health` | `{"status":"ok"}` |
-| 2 | Tarayıcıdan panele giriş | Dashboard yükleniyor, konsol hatasız |
-| 3 | `/dashboard` üzerindeyken sayfayı yenile | 404 değil, SPA açılıyor |
-| 4 | WhatsApp hattı ekle | QR görünüyor, okutunca `ready` |
-| 5 | **Coolify'dan Restart** | Hat QR istemeden `ready`'ye dönüyor |
-| 6 | Tarama başlat | Lead'ler geliyor |
-| 7 | Tek WhatsApp mesajı gönder | Ulaşıyor, geçmişe düşüyor |
-| 8 | `<URL>/r/<shortId>` | Yönlendiriyor ve tıklama sayacı artıyor |
-| 9 | Kampanya çalışırken Restart | Loglarda "mesaj kotası iade" satırı |
-| 10 | 24 saat sonra container'da `ps aux \| grep -c defunct` | Zombi süreç birikmemiş |
+| 2 | Container log'u | `[migrate] migrationlar uygulandı` + `ilk admin kullanıcı oluşturuldu` |
+| 3 | `SEED_ADMIN_*` ile giriş | Dashboard açılıyor |
+| 4 | `/dashboard` üzerindeyken sayfayı yenile | 404 değil, SPA açılıyor |
+| 5 | Kayıt formunu dene | "Yeni kayıt kapalı." (403) |
+| 6 | Tarama başlat | Lead'ler geliyor (Chromium çalışıyor) |
+| 7 | WhatsApp hattı ekle | QR görünüyor, okutunca `ready` |
+| 8 | **Coolify'dan Restart** | Hat QR istemeden `ready`'ye dönüyor |
+| 9 | Şablona medya yükle | `/media/...` üzerinden görüntüleniyor |
+| 10 | `<URL>/r/<shortId>` | Yönlendiriyor, tıklama sayacı artıyor |
+| 11 | 24 saat sonra container'da `ps aux \| grep -c defunct` | Zombi süreç birikmemiş |
 
 ---
 
@@ -121,11 +134,13 @@ Deploy sonrası sırayla:
 
 | Belirti | Sebep | Çözüm |
 |---------|-------|-------|
-| Panel beyaz ekran, konsolda "Supabase URL ve Anon Key ... tanımlanmalıdır" | `VITE_*` değişkenleri Build Variable olarak işaretlenmemiş | §2.1, sonra **rebuild** (restart yetmez — değerler bundle'a gömülü) |
-| Hat eklerken `ready` olmuyor, log'da Chrome hatası | Chrome yolu çözülememiş | Container log'unda ilk satırdaki `Chrome: ...` çıktısına bak; yoksa entrypoint çalışmamış |
-| Her deploy'da QR isteniyor | `/data` volume'ü bağlı değil | §3 |
-| Deploy sonrası mesaj kotası eksilmiş | Graceful shutdown çalışmamış | Log'da `SIGTERM alındı` satırını ara; Coolify'ın kapanış timeout'u 15 sn'den kısa olmamalı |
-| `exec format error` | `docker-entrypoint.sh` CRLF ile commit'lenmiş | `.gitattributes` bunu engelliyor; dosyayı LF ile yeniden kaydet |
+| `exec /usr/local/bin/leadpin-entrypoint.sh failed: No such file or directory` | Betik CRLF satır sonuyla gelmiş | Dockerfile bunu `sed` ile temizliyor; yine olursa dosyayı LF ile kaydet |
+| Açılışta `JWT_SECRET tanımlı değil veya 32 karakterden kısa` | Anahtar eksik/kısa | §3 |
+| `[migrate] başarısız` | `DATABASE_URL` yanlış veya veritabanı erişilemiyor | Coolify Terminal'den `psql "$DATABASE_URL" -c 'select 1'` |
+| Girişte "E-posta veya şifre hatalı" ama şifre doğru | `SEED_ADMIN_*` ilk açılıştan sonra değiştirildi | Seed yalnızca tablo boşken çalışır; şifreyi panelden değiştir |
+| Her deploy'da QR isteniyor | `/data` volume'ü bağlı değil | §4 |
+| Build ara sıra `npm ci` ile düşüyor | esbuild kurulumunda ETXTBSY yarışı | Dockerfile bir kez tekrar deniyor; ısrar ederse deploy'u yeniden tetikle |
+| Medya URL'leri yanlış host gösteriyor | `PUBLIC_BASE_URL` eski | Güncelle ve yeniden deploy et; eski kayıtlardaki URL'ler değişmez |
 
 Container içinde kabuk: Coolify → kaynak → **Terminal**
 
@@ -133,8 +148,7 @@ Container içinde kabuk: Coolify → kaynak → **Terminal**
 
 ## 8. Bu adımda çözülmeyenler (bilerek)
 
-- Supabase hâlâ bulutta — B adımının konusu
-- Auto-reply / karşılama / şablon / zamanlanmış kampanya sekmeleri 404 veriyor
-  (backend'de karşılıkları hiç yazılmamış) — C adımının konusu
-- Tek process zorunlu: `_lines.json` dosya kilidi olmadığı için replica sayısı
-  **1** kalmalı
+- Auto-reply / karşılama / şablon / zamanlanmış kampanya sekmeleri **404 veriyor**:
+  tabloları var, endpoint'leri hiç yazılmamış. Ayrı bir iş olarak planlandı.
+- Masaüstü (Tauri) sürümü derleniyor ama artık kendi başına çalışamaz — Postgres'e
+  erişmesi gerekir. Postgres dışarı açılmadığı sürece pratikte kullanılamaz.

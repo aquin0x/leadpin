@@ -16,4 +16,9 @@ fi
 
 echo "Chrome: $PUPPETEER_EXECUTABLE_PATH"
 
+# Şema migration'ları açılışta uygulanır: yeni bir veritabanına deploy edildiğinde
+# tabloların elle kurulması gerekmez, sonraki deploy'larda uygulanmış migration'lar
+# atlanır.
+node /app/backend/dist/db/migrate.js
+
 exec "$@"
