@@ -67,7 +67,11 @@ export const businesses = pgTable(
     address: text(),
     phone: text(),
     website: text(),
-    rating: numeric({ precision: 3, scale: 2 }),
+    // mode:'number' ŞART. Drizzle numeric'i varsayılan olarak string döndürür;
+    // PostgREST JSON sayısı döndürüyordu ve frontend Business.rating'i number
+    // olarak okuyor. $type<number>() burada yetmez — o yalnızca derleme
+    // zamanı bir iddiadır, runtime'da yine string gelir.
+    rating: numeric({ precision: 3, scale: 2, mode: 'number' }),
     reviews_count: integer().default(0),
     google_maps_url: text().unique(),
     short_id: text().unique(),
@@ -383,7 +387,7 @@ export const userSettings = pgTable(
 export const plans = pgTable('plans', {
   id: text().primaryKey(), // 'free' | 'pro' | 'unlimited'
   name: text().notNull(),
-  price_usd: numeric({ precision: 8, scale: 2 }).notNull().default('0'),
+  price_usd: numeric({ precision: 8, scale: 2, mode: 'number' }).notNull().default(0),
   scrape_limit: integer().notNull(),
   message_limit: integer().notNull(),
   lead_storage: integer().notNull().default(500),

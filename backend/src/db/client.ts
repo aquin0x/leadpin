@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from './schema';
 import { plans } from './schema';
 
+
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
   throw new Error('DATABASE_URL tanımlı değil — veritabanı bağlantısı kurulamaz.');
@@ -26,9 +27,9 @@ export const closePool = () => pool.end();
  */
 export async function seedPlans(): Promise<void> {
   const rows = [
-    { id: 'free', name: 'Ücretsiz', price_usd: '0', scrape_limit: 250, message_limit: 100, lead_storage: 500, display_order: 1 },
-    { id: 'pro', name: 'Pro', price_usd: '10', scrape_limit: 1500, message_limit: 1000, lead_storage: 500, display_order: 2 },
-    { id: 'unlimited', name: 'Sınırsız', price_usd: '20', scrape_limit: 10000, message_limit: 5000, lead_storage: 500, display_order: 3 },
+    { id: 'free', name: 'Ücretsiz', price_usd: 0, scrape_limit: 250, message_limit: 100, lead_storage: 500, display_order: 1 },
+    { id: 'pro', name: 'Pro', price_usd: 10, scrape_limit: 1500, message_limit: 1000, lead_storage: 500, display_order: 2 },
+    { id: 'unlimited', name: 'Sınırsız', price_usd: 20, scrape_limit: 10000, message_limit: 5000, lead_storage: 500, display_order: 3 },
   ];
   for (const p of rows) {
     await db.insert(plans).values(p).onConflictDoUpdate({ target: plans.id, set: p });

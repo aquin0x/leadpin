@@ -63,9 +63,8 @@ export const getBusinesses = async (req: Request, res: Response) => {
     filters.push(isNotNull(businesses.phone), ne(businesses.phone, ''));
   }
 
-  // rating numeric — Drizzle string bekler.
-  if (minRating) filters.push(gte(businesses.rating, String(minRating)));
-  if (maxRating) filters.push(lte(businesses.rating, String(maxRating)));
+  if (minRating) filters.push(gte(businesses.rating, Number(minRating)));
+  if (maxRating) filters.push(lte(businesses.rating, Number(maxRating)));
   if (minReviews) filters.push(gte(businesses.reviews_count, Number(minReviews)));
 
   const where = and(...filters);

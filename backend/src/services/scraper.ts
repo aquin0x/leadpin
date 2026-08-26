@@ -1,4 +1,6 @@
-import { supabase } from '../utils/supabase';
+import { and, eq } from 'drizzle-orm';
+import { db } from '../db/client';
+import { businesses, scrapeJobs } from '../db/schema';
 
 export interface ScrapeParams {
   jobId: string;
@@ -305,10 +307,10 @@ export class ScraperService {
       console.log(`Found ${results.length} total unique potential leads.`);
 
       // Update Total Leads in DB immediately so panel doesn't show 0
-      await supabase.from('scrape_jobs').update({
-        total_leads: results.length,
-        status: 'running'
-      }).eq('id', jobId);
+      await db
+        .update(scrapeJobs)
+        .set({ total_leads: results.length, status: 'running' })
+        .where(eq(scrapeJobs.id, jobId));
 
       // Plan başına lead saklama limiti: kullanıcının mevcut lead sayısı +
       // bu taramada eklenebilecek azami yeni lead.
@@ -330,13 +332,13 @@ export class ScraperService {
         
         // Stop check: Verify if the job still exists and is still 'running'
         try {
-          const { data: jobStatus, error: statusError } = await supabase
-            .from('scrape_jobs')
-            .select('status')
-            .eq('id', jobId)
-            .single();
-          
-          if (statusError || !jobStatus || jobStatus.status !== 'running') {
+          const [jobStatus] = await db
+            .select({ status: scrapeJobs.status })
+            .from(scrapeJobs)
+            .where(eq(scrapeJobs.id, jobId))
+            .limit(1);
+
+          if (!jobStatus || jobStatus.status !== 'running') {
             console.log(`Job ${jobId} stopped or changed status. Terminating scraper.`);
             return;
           }
@@ -347,7 +349,7 @@ export class ScraperService {
         console.log(`[${current}/${results.length}] Extracting details for: ${res.name}`);
 
         // Update current lead count in DB
-        await supabase.from('scrape_jobs').update({ current_lead: current }).eq('id', jobId);
+        await db.update(scrapeJobs).set({ current_lead: current }).where(eq(scrapeJobs.id, jobId));
 
         let detailedData = { phone: '', website: '', address: '', category: '', rating: 0, reviews: 0 };
 
@@ -449,12 +451,11 @@ export class ScraperService {
         }
 
         // Manual Upsert: First check if it exists
-        const { data: existing } = await supabase
-          .from('businesses')
-          .select('id')
-          .eq('google_maps_url', res.mapsUrl)
-          .eq('user_id', userId)
-          .maybeSingle();
+        const [existing] = await db
+          .select({ id: businesses.id })
+          .from(businesses)
+          .where(and(eq(businesses.google_maps_url, res.mapsUrl), eq(businesses.user_id, userId)))
+          .limit(1);
 
         const extractedNeighborhood = extractNeighborhood(detailedData.address || '', canonicalNeighborhoods);
         const businessData = {
@@ -473,14 +474,14 @@ export class ScraperService {
           status: 'new'
         };
 
-        let dbError;
+        let dbError: Error | null = null;
         if (existing) {
-          // Update existing — don't overwrite short_id (preserve links already shared)
-          const { error } = await supabase
-            .from('businesses')
-            .update(businessData)
-            .eq('id', existing.id);
-          dbError = error;
+          // Mevcut kaydı güncelle — short_id'ye dokunma, paylaşılmış linkler bozulmasın.
+          try {
+            await db.update(businesses).set(businessData).where(eq(businesses.id, existing.id));
+          } catch (e: any) {
+            dbError = e;
+          }
         } else {
           // Lead saklama limiti kontrolü
           if (storedCount >= storageLimit) {
@@ -490,16 +491,20 @@ export class ScraperService {
             }
             continue;
           }
-          // Insert new — retry on short_id unique conflict (unlikely but possible)
+          // Yeni kayıt — short_id benzersizlik çakışmasında yeniden dene
+          // (olası ama nadir: 4 karakterlik alfabe).
           let lastErr: any = null;
           for (let attempt = 0; attempt < 5; attempt++) {
-            const { error } = await supabase
-              .from('businesses')
-              .insert({ ...businessData, short_id: generateShortId() });
-            if (!error) { lastErr = null; storedCount++; break; }
-            lastErr = error;
-            // Only retry on short_id uniqueness; otherwise bail.
-            if (!/short_id/i.test(error.message || '')) break;
+            try {
+              await db.insert(businesses).values({ ...businessData, short_id: generateShortId() });
+              lastErr = null;
+              storedCount++;
+              break;
+            } catch (e: any) {
+              lastErr = e;
+              // Yalnızca short_id çakışmasında tekrar dene; diğer hatalarda çık.
+              if (!/short_id/i.test(e?.message || '')) break;
+            }
           }
           dbError = lastErr;
         }
@@ -511,15 +516,15 @@ export class ScraperService {
         }
       }
 
-      await supabase.from('scrape_jobs').update({ status: 'completed' }).eq('id', jobId);
+      await db.update(scrapeJobs).set({ status: 'completed' }).where(eq(scrapeJobs.id, jobId));
       console.log('Scrape job completed successfully.');
 
     } catch (error: any) {
       console.error('Scraping error:', error.message);
-      await supabase.from('scrape_jobs').update({ 
-        status: 'failed', 
-        error_message: error.message 
-      }).eq('id', jobId);
+      await db
+        .update(scrapeJobs)
+        .set({ status: 'failed', error_message: error.message })
+        .where(eq(scrapeJobs.id, jobId));
     } finally {
       await browser.close();
     }

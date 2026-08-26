@@ -1,5 +1,5 @@
 {
-  "id": "233f7761-7a48-4b66-b9e1-2d7a5a62cbc5",
+  "id": "7e6c62ac-f872-4ceb-9b33-f20999b443f2",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -706,7 +706,7 @@
           "type": "numeric(8, 2)",
           "primaryKey": false,
           "notNull": true,
-          "default": "'0'"
+          "default": 0
         },
         "scrape_limit": {
           "name": "scrape_limit",

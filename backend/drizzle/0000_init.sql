@@ -70,7 +70,7 @@ CREATE TABLE "outreach_logs" (
 CREATE TABLE "plans" (
 	"id" text PRIMARY KEY NOT NULL,
 	"name" text NOT NULL,
-	"price_usd" numeric(8, 2) DEFAULT '0' NOT NULL,
+	"price_usd" numeric(8, 2) DEFAULT 0 NOT NULL,
 	"scrape_limit" integer NOT NULL,
 	"message_limit" integer NOT NULL,
 	"lead_storage" integer DEFAULT 500 NOT NULL,
