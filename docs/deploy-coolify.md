@@ -100,15 +100,23 @@ volume olmadan her deploy hatları sıfırlar.
 (Her WhatsApp hattı ayrı bir headless Chromium ≈ 250–400 MB; tarama sırasında
 bir Chromium daha açılır.)
 
-**Domains:**
-1. Önce `http://92.5.1.12:<atanan port>` ile doğrula.
-2. Doğrulama listesi geçince sslip.io alan adı ver:
-   `https://leadpin.92-5-1-12.sslip.io` → Let's Encrypt sertifikasını Coolify alır.
-   Bu desen sunucuda `fraxlabs-web` ve `millitavir-web` üzerinde zaten çalışıyor.
-3. Alan adı kesinleşince `ALLOWED_ORIGINS` ve `PUBLIC_BASE_URL`'i o adrese
-   ayarla ve **yeniden deploy et** (`PUBLIC_BASE_URL` medya URL'lerine yazılır).
+**Domains:** Kaynak oluşturulurken Coolify otomatik bir sslip.io adresi verir
+(mevcut kurulumda `http://enc5crt7pejq90a130145mla.92.5.1.12.sslip.io`).
 
-> TLS'i erken aç: HTTPS olmadan oturum jetonu düz metin gider.
+> **sslip.io ile HTTPS kullanma.** Coolify bunu açıkça uyarıyor: sslip.io
+> paylaşımlı bir alan adı olduğu için Let's Encrypt ona oran sınırı uyguluyor
+> ve sertifika doğrulaması başarısız oluyor. Adres `http://` kalmalı.
+>
+> Gerçek TLS için **kendi alan adın** gerekir: `ugra.io` altında bir subdomain
+> (ör. `leadpin.ugra.io`) sunucunun IP'sine yönlendirilir, Coolify'daki Domains
+> alanına `https://leadpin.ugra.io` yazılır ve sertifika sorunsuz alınır.
+>
+> O zamana kadar oturum jetonu şifresiz gidiyor. Tek kullanıcıyken kabul
+> edilebilir, ama kalıcı bir durum olmamalı.
+
+Alan adı değişirse `ALLOWED_ORIGINS` ve `PUBLIC_BASE_URL`'i güncelle ve
+**yeniden deploy et** — `PUBLIC_BASE_URL` yüklenen medyanın URL'lerine yazılır,
+eski kayıtlardaki adresler kendiliğinden değişmez.
 
 ---
 
